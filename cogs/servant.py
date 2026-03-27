@@ -339,8 +339,12 @@ class ServantCog(commands.Cog):
         
         await interaction.followup.send(embed=embed, view=view)
     
-    async def display_servant(self, interaction, servant_id: int, region: str):
+       async def display_servant(self, interaction: discord.Interaction, servant_id: int, region: str):
         """Fetch and display detailed servant information"""
+        # Check if interaction was already responded to
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+        
         servant_data = await self.api.get_servant_details(servant_id, region)
         
         if not servant_data:
