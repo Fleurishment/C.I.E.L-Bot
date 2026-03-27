@@ -71,7 +71,7 @@ class UtilityCog(commands.Cog):
             inline=False
         )
         
-        embed.set_footer(text="FGO Bot | Data provided by Atlas Academy API")
+        embed.set_footer(text="Made by krlnel | Data provided by Atlas Academy API")
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
