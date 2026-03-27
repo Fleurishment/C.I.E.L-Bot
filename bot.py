@@ -6,6 +6,7 @@ import asyncio
 from typing import Optional, Dict, List
 import json
 import re
+from difflib import get_close_matches
 
 # API Base URLs
 BASE_URL = "https://api.atlasacademy.io"
@@ -65,43 +66,120 @@ async def load_cache():
     except Exception as e:
         print(f"Cache loading error: {e}")
 
-# Search Helpers (keep existing ones and add these)
+def normalize_name(name: str) -> str:
+    """Normalize name for better matching"""
+    # Remove extra spaces, lowercase, remove special punctuation
+    name = re.sub(r'\s+', ' ', name.strip().lower())
+    name = re.sub(r'[^\w\s]', '', name)  # Remove special chars
+    return name
+
 async def search_servant(query: str, region: str = "NA"):
-    """Search for servant by name or ID"""
+    """Search for servant by name or ID - improved fuzzy matching"""
+    query = query.strip()
+    
+    # Try ID first
     if query.isdigit():
         async with bot.session.get(f"{NICE_URL}/{region}/servant/{query}") as resp:
             if resp.status == 200:
                 return await resp.json()
+            return None
     
+    # Get all servants
     async with bot.session.get(f"{BASIC_URL}/{region}/servant") as resp:
-        if resp.status == 200:
-            servants = await resp.json()
-            query_lower = query.lower()
-            matches = [s for s in servants if query_lower in s["name"].lower()]
-            if matches:
-                servant_id = matches[0]["id"]
-                async with bot.session.get(f"{NICE_URL}/{region}/servant/{servant_id}") as resp2:
+        if resp.status != 200:
+            return None
+            
+        servants = await resp.json()
+        query_lower = query.lower()
+        query_normalized = normalize_name(query)
+        
+        # Priority 1: Exact match (case-insensitive)
+        for s in servants:
+            if s["name"].lower() == query_lower:
+                async with bot.session.get(f"{NICE_URL}/{region}/servant/{s['id']}") as resp2:
                     if resp2.status == 200:
                         return await resp2.json()
+        
+        # Priority 2: Starts with (case-insensitive)
+        matches = [s for s in servants if s["name"].lower().startswith(query_lower)]
+        if matches:
+            servant_id = matches[0]["id"]
+            async with bot.session.get(f"{NICE_URL}/{region}/servant/{servant_id}") as resp2:
+                if resp2.status == 200:
+                    return await resp2.json()
+        
+        # Priority 3: Contains (case-insensitive)
+        matches = [s for s in servants if query_lower in s["name"].lower()]
+        if matches:
+            servant_id = matches[0]["id"]
+            async with bot.session.get(f"{NICE_URL}/{region}/servant/{servant_id}") as resp2:
+                if resp2.status == 200:
+                    return await resp2.json()
+        
+        # Priority 4: Fuzzy matching for typos/similar names
+        names = [s["name"] for s in servants]
+        close_matches = get_close_matches(query, names, n=1, cutoff=0.6)
+        if close_matches:
+            match_name = close_matches[0]
+            servant = next((s for s in servants if s["name"] == match_name), None)
+            if servant:
+                async with bot.session.get(f"{NICE_URL}/{region}/servant/{servant['id']}") as resp2:
+                    if resp2.status == 200:
+                        return await resp2.json()
+    
     return None
 
 async def search_ce(query: str, region: str = "NA"):
-    """Search for craft essence"""
+    """Search for craft essence with improved matching"""
+    query = query.strip()
+    
     if query.isdigit():
         async with bot.session.get(f"{NICE_URL}/{region}/craft-essence/{query}") as resp:
             if resp.status == 200:
                 return await resp.json()
+            return None
     
     async with bot.session.get(f"{BASIC_URL}/{region}/craft-essence") as resp:
-        if resp.status == 200:
-            ces = await resp.json()
-            query_lower = query.lower()
-            matches = [c for c in ces if query_lower in c["name"].lower()]
-            if matches:
-                ce_id = matches[0]["id"]
-                async with bot.session.get(f"{NICE_URL}/{region}/craft-essence/{ce_id}") as resp2:
+        if resp.status != 200:
+            return None
+            
+        ces = await resp.json()
+        query_lower = query.lower()
+        
+        # Priority 1: Exact match
+        for ce in ces:
+            if ce["name"].lower() == query_lower:
+                async with bot.session.get(f"{NICE_URL}/{region}/craft-essence/{ce['id']}") as resp2:
                     if resp2.status == 200:
                         return await resp2.json()
+        
+        # Priority 2: Starts with
+        matches = [c for c in ces if c["name"].lower().startswith(query_lower)]
+        if matches:
+            ce_id = matches[0]["id"]
+            async with bot.session.get(f"{NICE_URL}/{region}/craft-essence/{ce_id}") as resp2:
+                if resp2.status == 200:
+                    return await resp2.json()
+        
+        # Priority 3: Contains
+        matches = [c for c in ces if query_lower in c["name"].lower()]
+        if matches:
+            ce_id = matches[0]["id"]
+            async with bot.session.get(f"{NICE_URL}/{region}/craft-essence/{ce_id}") as resp2:
+                if resp2.status == 200:
+                    return await resp2.json()
+        
+        # Priority 4: Fuzzy
+        names = [c["name"] for c in ces]
+        close_matches = get_close_matches(query, names, n=1, cutoff=0.6)
+        if close_matches:
+            match_name = close_matches[0]
+            ce = next((c for c in ces if c["name"] == match_name), None)
+            if ce:
+                async with bot.session.get(f"{NICE_URL}/{region}/craft-essence/{ce['id']}") as resp2:
+                    if resp2.status == 200:
+                        return await resp2.json()
+    
     return None
 
 def get_servant_arts(data: dict) -> dict:
@@ -112,18 +190,15 @@ def get_servant_arts(data: dict) -> dict:
     
     extra = data["extraAssets"]
     
-    # Main character artwork (ascensions)
     if "charaGraph" in extra and "ascension" in extra["charaGraph"]:
         ascension = extra["charaGraph"]["ascension"]
         for key in ["0", "1", "2", "3", "4"]:
             if key in ascension:
                 arts[f"Ascension {key}"] = ascension[key]
     
-    # Costume/dress arts
     if "charaGraph" in extra and "costume" in extra["charaGraph"]:
         costumes = extra["charaGraph"]["costume"]
         for costume_id, url in costumes.items():
-            # Try to get costume name from costumeAssets if available
             costume_name = f"Costume {costume_id}"
             if "costumeAssets" in data and "items" in data["costumeAssets"]:
                 for item in data["costumeAssets"]["items"]:
@@ -132,14 +207,12 @@ def get_servant_arts(data: dict) -> dict:
                         break
             arts[costume_name] = url
     
-    # Command codes (small sprites)
     if "commands" in extra:
         cmds = extra["commands"]
         if "ascension" in cmds:
             for key, url in cmds["ascension"].items():
                 arts[f"Command Card {key}"] = url
     
-    # Status screen images
     if "status" in extra and "ascension" in extra["status"]:
         for key, url in extra["status"]["ascension"].items():
             arts[f"Status {key}"] = url
@@ -154,19 +227,16 @@ def get_ce_arts(data: dict) -> dict:
     
     extra = data["extraAssets"]
     
-    # Main CE artwork
     if "equip" in extra:
         equip = extra["equip"]
         if "1" in equip:
             arts["Base Art"] = equip["1"]
         if "2" in equip:
             arts["Max Limit Broken"] = equip["2"]
-        # Fallback for any other keys
         for key, url in equip.items():
             if key not in ["1", "2"]:
                 arts[f"Art {key}"] = url
     
-    # Face/icon
     if "faces" in extra and "equip" in extra["faces"]:
         faces = extra["faces"]["equip"]
         for key, url in faces.items():
@@ -174,7 +244,6 @@ def get_ce_arts(data: dict) -> dict:
     
     return arts
 
-# ART COMMAND
 @bot.tree.command(name="art", description="Display all artwork and sprites for a Servant or CE")
 @app_commands.describe(
     query="Servant or CE name/ID",
@@ -222,14 +291,12 @@ async def art_command(
         await interaction.followup.send("❌ No artwork found for this entry.")
         return
     
-    # Create main embed with summary
     embed = discord.Embed(
         title=title,
         description=description,
         color=color
     )
     
-    # Show available art types
     art_types = list(arts.keys())
     embed.add_field(
         name="Available Artwork", 
@@ -238,21 +305,17 @@ async def art_command(
         inline=False
     )
     
-    # Set thumbnail to first available art
     if art_types:
         first_art = arts[art_types[0]]
         embed.set_image(url=first_art)
     
     await interaction.followup.send(embed=embed)
     
-    # Send additional embeds for each major art piece (Discord allows up to 10 images per message technically, 
-    # but we'll send separate messages to avoid cluttering)
     main_arts = {k: v for k, v in arts.items() if "Command" not in k and "Icon" not in k and "Status" not in k}
     
     if len(main_arts) > 1:
-        # Group by 4 images per message
         art_items = list(main_arts.items())
-        for i in range(1, len(art_items), 4):  # Skip first one (already shown)
+        for i in range(1, len(art_items), 4):
             batch = art_items[i:i+4]
             embeds = []
             for art_name, art_url in batch:
@@ -265,16 +328,14 @@ async def art_command(
             
             if embeds:
                 await interaction.channel.send(embeds=embeds)
-                await asyncio.sleep(0.5)  # Rate limit protection
+                await asyncio.sleep(0.5)
     
-    # Show sprites/command cards in a separate summary if available
     sprite_arts = {k: v for k, v in arts.items() if any(x in k for x in ["Command", "Icon", "Face"])}
     if sprite_arts:
         sprite_embed = discord.Embed(
             title="🎭 Sprites & Icons",
             color=discord.Color.greyple()
         )
-        # Show first 4 sprites
         for art_name, art_url in list(sprite_arts.items())[:4]:
             sprite_embed.add_field(name=art_name, value=f"[View]({art_url})", inline=True)
         
@@ -283,10 +344,9 @@ async def art_command(
         
         await interaction.channel.send(embed=sprite_embed)
 
-# Existing commands (servant, ce, skill, np, help) - keep these from previous code
 @bot.tree.command(name="servant", description="Search for a Servant by name or ID")
 @app_commands.describe(
-    query="Servant name or ID number",
+    query="Servant name or ID number (not case-sensitive)",
     region="Game region (NA or JP)"
 )
 @app_commands.choices(region=[
@@ -299,7 +359,10 @@ async def servant_command(interaction: discord.Interaction, query: str, region: 
     servant = await search_servant(query, region)
     
     if not servant:
-        await interaction.followup.send(f"❌ Could not find servant: **{query}**")
+        await interaction.followup.send(
+            f"❌ Could not find servant: **{query}**\n"
+            f"💡 Tips: Try partial names like `Gil` instead of `Gilgamesh`, or use the ID number."
+        )
         return
     
     embed = discord.Embed(
@@ -308,12 +371,10 @@ async def servant_command(interaction: discord.Interaction, query: str, region: 
         color=discord.Color.blue()
     )
     
-    # Add image (first ascension art)
     if "extraAssets" in servant and "charaGraph" in servant["extraAssets"]:
         chara = servant["extraAssets"]["charaGraph"]
         if "ascension" in chara:
             asc = chara["ascension"]
-            # Prefer ascension 1 or 0
             img_url = asc.get("1") or asc.get("0") or list(asc.values())[0] if asc else None
             if img_url:
                 embed.set_thumbnail(url=img_url)
@@ -333,13 +394,15 @@ async def servant_command(interaction: discord.Interaction, query: str, region: 
         card_str = " ".join([card_emojis.get(c, c.upper()) for c in servant["cards"]])
         embed.add_field(name="Command Cards", value=card_str, inline=False)
     
+    # Show all 3 skills summary
     if "skills" in servant and servant["skills"]:
-        skill_text = ""
-        for skill in servant["skills"][:3]:
-            skill_name = skill.get("name", "Unknown")
-            skill_text += f"• {skill_name}\n"
-        if skill_text:
-            embed.add_field(name="Skills", value=skill_text[:1024], inline=False)
+        skill_lines = []
+        for i in range(1, 4):  # Skills 1, 2, 3
+            skill = next((s for s in servant["skills"] if s.get("num") == i), None)
+            if skill:
+                skill_lines.append(f"**{i}.** {skill.get('name', 'Unknown')}")
+        if skill_lines:
+            embed.add_field(name="Skills", value="\n".join(skill_lines), inline=False)
     
     if "noblePhantasms" in servant and servant["noblePhantasms"]:
         np = servant["noblePhantasms"][0]
@@ -351,14 +414,169 @@ async def servant_command(interaction: discord.Interaction, query: str, region: 
         traits = ", ".join([t.get("name", "") for t in servant["traits"][:5]])
         embed.set_footer(text=f"Traits: {traits}")
     
-    # Add hint about art command
     embed.add_field(name="🎨 Artwork", value="Use `/art` to see all ascension arts!", inline=False)
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="skills", description="Show all 3 skills of a servant at once")
+@app_commands.describe(
+    servant_name="Name of the servant (not case-sensitive)",
+    region="Game region"
+)
+@app_commands.choices(region=[
+    app_commands.Choice(name="North America", value="NA"),
+    app_commands.Choice(name="Japan", value="JP")
+])
+async def skills_command(interaction: discord.Interaction, servant_name: str, region: str = "NA"):
+    """Show all 3 skills with full details"""
+    await interaction.response.defer()
+    
+    servant = await search_servant(servant_name, region)
+    if not servant:
+        await interaction.followup.send(f"❌ Servant not found: **{servant_name}**")
+        return
+    
+    # Send initial embed with servant info
+    main_embed = discord.Embed(
+        title=f"🎯 {servant['name']} - All Skills",
+        description=f"Class: {servant.get('className', 'Unknown')}",
+        color=discord.Color.red()
+    )
+    
+    if "extraAssets" in servant and "faces" in servant["extraAssets"]:
+        faces = servant["extraAssets"]["faces"]
+        if faces:
+            main_embed.set_thumbnail(url=list(faces.values())[0])
+    
+    await interaction.followup.send(embed=main_embed)
+    
+    # Send each skill as a separate embed for better formatting
+    for skill_num in range(1, 4):
+        skills = [s for s in servant.get("skills", []) if s.get("num") == skill_num]
+        if not skills:
+            continue
+            
+        skill = skills[0]
+        
+        embed = discord.Embed(
+            title=f"Skill {skill_num}: {skill.get('name', 'Unknown')}",
+            color=discord.Color.dark_red()
+        )
+        
+        if "icon" in skill:
+            embed.set_thumbnail(url=skill["icon"])
+        
+        if "coolDown" in skill:
+            cd = skill["coolDown"]
+            embed.add_field(name="Cooldown", value=f"{cd[0]} → {cd[-1]} turns", inline=True)
+        
+        # Get skill effects
+        if "functions" in skill:
+            effects = []
+            for func in skill["functions"]:
+                popup = func.get("popupText", "")
+                if popup:
+                    effects.append(f"• {popup}")
+            if effects:
+                # Split into multiple fields if too long
+                effect_text = "\n".join(effects)
+                if len(effect_text) > 1024:
+                    effect_text = effect_text[:1021] + "..."
+                embed.add_field(name="Effects", value=effect_text, inline=False)
+        
+        await interaction.channel.send(embed=embed)
+        await asyncio.sleep(0.3)  # Prevent rate limiting
+
+@bot.tree.command(name="skill", description="Get specific skill information (1, 2, or 3)")
+@app_commands.describe(
+    servant_name="Name of the servant",
+    skill_num="Skill number (1, 2, or 3) - Optional, leave empty to see all skills",
+    region="Game region"
+)
+@app_commands.choices(region=[
+    app_commands.Choice(name="North America", value="NA"),
+    app_commands.Choice(name="Japan", value="JP")
+])
+async def skill_command(
+    interaction: discord.Interaction, 
+    servant_name: str, 
+    skill_num: Optional[int] = None,
+    region: str = "NA"
+):
+    """Single skill lookup or all skills if no number provided"""
+    await interaction.response.defer()
+    
+    servant = await search_servant(servant_name, region)
+    if not servant:
+        await interaction.followup.send(f"❌ Servant not found: **{servant_name}**")
+        return
+    
+    # If no skill number provided, show all skills (redirect to skills command logic)
+    if skill_num is None:
+        # Show compact view of all skills
+        embed = discord.Embed(
+            title=f"🎯 {servant['name']} - Skills Overview",
+            color=discord.Color.red()
+        )
+        
+        for i in range(1, 4):
+            skill = next((s for s in servant.get("skills", []) if s.get("num") == i), None)
+            if skill:
+                name = skill.get('name', 'Unknown')
+                cd = skill.get('coolDown', [0, 0])
+                effects = []
+                if "functions" in skill:
+                    effects = [f.get("popupText", "") for f in skill["functions"] if f.get("popupText")]
+                
+                value = f"**{name}**\n"
+                value += f"Cooldown: {cd[0]}/{cd[-1]}\n"
+                if effects:
+                    value += f"*{effects[0]}*"
+                
+                embed.add_field(name=f"Skill {i}", value=value[:1024], inline=False)
+        
+        await interaction.followup.send(embed=embed)
+        return
+    
+    # Specific skill requested
+    if skill_num not in [1, 2, 3]:
+        await interaction.followup.send("❌ Skill number must be 1, 2, or 3!", ephemeral=True)
+        return
+    
+    skills = [s for s in servant.get("skills", []) if s.get("num") == skill_num]
+    if not skills:
+        await interaction.followup.send(f"❌ Skill {skill_num} not found!")
+        return
+    
+    skill = skills[0]
+    
+    embed = discord.Embed(
+        title=f"🎯 {skill.get('name', 'Unknown')}",
+        description=f"**{servant['name']}** - Skill {skill_num}",
+        color=discord.Color.red()
+    )
+    
+    if "icon" in skill:
+        embed.set_thumbnail(url=skill["icon"])
+    
+    if "coolDown" in skill:
+        cd = skill["coolDown"]
+        embed.add_field(name="Cooldown", value=f"{cd[0]} → {cd[-1]} turns", inline=True)
+    
+    if "functions" in skill:
+        effects = []
+        for func in skill["functions"]:
+            popup = func.get("popupText", "")
+            if popup:
+                effects.append(f"• {popup}")
+        if effects:
+            embed.add_field(name="Effects", value="\n".join(effects[:10]), inline=False)
     
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="ce", description="Search for a Craft Essence")
 @app_commands.describe(
-    query="Craft Essence name or ID",
+    query="Craft Essence name or ID (not case-sensitive)",
     region="Game region (NA or JP)"
 )
 @app_commands.choices(region=[
@@ -371,7 +589,10 @@ async def ce_command(interaction: discord.Interaction, query: str, region: str =
     ce = await search_ce(query, region)
     
     if not ce:
-        await interaction.followup.send(f"❌ Could not find Craft Essence: **{query}**")
+        await interaction.followup.send(
+            f"❌ Could not find Craft Essence: **{query}**\n"
+            f"💡 Try using partial names or the ID number!"
+        )
         return
     
     embed = discord.Embed(
@@ -380,7 +601,6 @@ async def ce_command(interaction: discord.Interaction, query: str, region: str =
         color=discord.Color.gold()
     )
     
-    # Add CE image
     if "extraAssets" in ce and "equip" in ce["extraAssets"]:
         equip = ce["extraAssets"]["equip"]
         img_url = equip.get("1") or list(equip.values())[0] if equip else None
@@ -416,62 +636,9 @@ async def ce_command(interaction: discord.Interaction, query: str, region: str =
     
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="skill", description="Get detailed skill information")
-@app_commands.describe(
-    servant_name="Name of the servant",
-    skill_num="Skill number (1, 2, or 3)",
-    region="Game region"
-)
-@app_commands.choices(region=[
-    app_commands.Choice(name="North America", value="NA"),
-    app_commands.Choice(name="Japan", value="JP")
-])
-async def skill_command(interaction: discord.Interaction, servant_name: str, skill_num: int, region: str = "NA"):
-    if skill_num not in [1, 2, 3]:
-        await interaction.response.send_message("❌ Skill number must be 1, 2, or 3!", ephemeral=True)
-        return
-    
-    await interaction.response.defer()
-    
-    servant = await search_servant(servant_name, region)
-    if not servant:
-        await interaction.followup.send(f"❌ Servant not found: **{servant_name}**")
-        return
-    
-    skills = [s for s in servant.get("skills", []) if s.get("num") == skill_num]
-    if not skills:
-        await interaction.followup.send("❌ Skill not found!")
-        return
-    
-    skill = skills[0]
-    
-    embed = discord.Embed(
-        title=f"🎯 {skill.get('name', 'Unknown')}",
-        description=f"**{servant['name']}** - Skill {skill_num}",
-        color=discord.Color.red()
-    )
-    
-    if "icon" in skill:
-        embed.set_thumbnail(url=skill["icon"])
-    
-    if "coolDown" in skill:
-        cd = skill["coolDown"]
-        embed.add_field(name="Cooldown", value=f"{cd[0]}/{cd[-1]}", inline=True)
-    
-    if "functions" in skill:
-        effects = []
-        for func in skill["functions"]:
-            popup = func.get("popupText", "")
-            if popup:
-                effects.append(f"• {popup}")
-        if effects:
-            embed.add_field(name="Effects", value="\n".join(effects[:10]), inline=False)
-    
-    await interaction.followup.send(embed=embed)
-
 @bot.tree.command(name="np", description="Get Noble Phantasm details")
 @app_commands.describe(
-    servant_name="Servant name",
+    servant_name="Servant name (not case-sensitive)",
     region="Game region"
 )
 @app_commands.choices(region=[
@@ -532,10 +699,11 @@ async def help_command(interaction: discord.Interaction):
     )
     
     commands_info = [
-        ("`/servant <name/id>`", "Search for servant information, stats, and skills"),
-        ("`/ce <name/id>`", "Search for Craft Essence details"),
-        ("`/art <name/id> [type]`", "🎨 **NEW:** Display all ascension arts, costumes, and sprites"),
-        ("`/skill <servant> <1-3>`", "Get detailed skill information"),
+        ("`/servant <name/id>`", "Search for servant info (case-insensitive!)"),
+        ("`/ce <name/id>`", "Search for Craft Essence"),
+        ("`/art <name/id> [type]`", "Display all ascension arts and sprites"),
+        ("`/skills <servant>`", "🆕 **NEW:** Show all 3 skills at once with full details"),
+        ("`/skill <servant> [1-3]`", "View specific skill (or leave empty for all)"),
         ("`/np <servant>`", "View Noble Phantasm details"),
         ("`/help`", "Show this help message")
     ]
@@ -544,11 +712,11 @@ async def help_command(interaction: discord.Interaction):
         embed.add_field(name=name, value=value, inline=False)
     
     embed.add_field(
-        name="🎨 Art Command Tips",
-        value="• Shows all 4 ascension stages\n"
-              "• Includes costume/dress arts if available\n"
-              "• Shows CE base and Max Limit Broken art\n"
-              "• Displays command card sprites",
+        name="🔍 Search Tips",
+        value="• **Not case-sensitive**: `gilgamesh`, `GILGAMESH`, `Gil` all work\n"
+              "• **Partial names**: `artoria` finds Artoria Pendragon\n"
+              "• **Fuzzy matching**: Typos are automatically corrected\n"
+              "• **ID numbers**: Use exact ID for precise results",
         inline=False
     )
     
