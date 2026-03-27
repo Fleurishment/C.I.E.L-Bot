@@ -4,7 +4,8 @@ from discord.ext import commands
 from discord.ui import Button, View
 import aiohttp
 import re
-from utils.atlas_api import AtlasAPI
+import random
+import datetime
 
 class ServantView(View):
     def __init__(self, servant_data, assets, region):
@@ -28,20 +29,16 @@ class ServantView(View):
         if self.servant.get('faces') and len(self.servant['faces']) > 0:
             embed.set_thumbnail(url=self.servant['faces'][0])
         
-        # Cost & Stats
         stats = self.servant.get('atkGrowth', [])
         hp_stats = self.servant.get('hpGrowth', [])
         
         embed.add_field(name="Cost", value=self.servant.get('cost', 'N/A'), inline=True)
         embed.add_field(name="ATK (Max)", value=stats[-1] if stats else 'N/A', inline=True)
         embed.add_field(name="HP (Max)", value=hp_stats[-1] if hp_stats else 'N/A', inline=True)
-        
-        # Growth Curve
         embed.add_field(name="Growth Curve", value=self.servant.get('growthCurve', 'N/A'), inline=True)
         embed.add_field(name="Star Absorption", value=self.servant.get('starAbsorb', 'N/A'), inline=True)
         embed.add_field(name="Star Generation", value=f"{self.servant.get('starGen', 'N/A')}%", inline=True)
         
-        # NP Gain
         np_gain = self.servant.get('npGain', {})
         if np_gain:
             embed.add_field(
@@ -50,7 +47,6 @@ class ServantView(View):
                 inline=False
             )
         
-        # Traits
         traits = [t['name'] for t in self.servant.get('traits', [])][:5]
         if traits:
             embed.add_field(name="Traits", value=", ".join(traits), inline=False)
@@ -69,9 +65,7 @@ class ServantView(View):
             skill_rank = skill.get('rank', '-')
             cooldown = skill.get('coolDown', [0, 0])
             
-            # Get actual skill description
             detail = skill.get('detail', 'No description available')
-            # Clean up description - replace [g][o] style tags if present
             detail = re.sub(r'\[.*?\]', '', detail)
             detail = detail.replace('&lt;', '<').replace('&gt;', '>')
             detail = detail[:200] + "..." if len(detail) > 200 else detail
@@ -100,19 +94,13 @@ class ServantView(View):
             np_embed.add_field(name="Name", value=f"{np_name} {np_rank}", inline=True)
             np_embed.add_field(name="Card Type", value=np_type, inline=True)
             
-            # Get NP description
             np_detail = np_data.get('detail', 'No description available')
             np_detail = re.sub(r'\[.*?\]', '', np_detail)
             np_detail = np_detail.replace('&lt;', '<').replace('&gt;', '>')
             np_detail = np_detail[:300] + "..." if len(np_detail) > 300 else np_detail
             
-            np_embed.add_field(
-                name="Description",
-                value=np_detail,
-                inline=False
-            )
+            np_embed.add_field(name="Description", value=np_detail, inline=False)
             
-            # Overcharge effects if available
             np_functions = np_data.get('functions', [])
             if np_functions:
                 effects = []
@@ -123,22 +111,17 @@ class ServantView(View):
                         if effect_text and effect_text not in ['addState', 'damage']:
                             effects.append(f"• {effect_text}")
                 if effects:
-                    np_embed.add_field(
-                        name="Effects",
-                        value="\n".join(effects[:3]) or "See description",
-                        inline=False
-                    )
+                    np_embed.add_field(name="Effects", value="\n".join(effects[:3]) or "See description", inline=False)
         
         np_embed.set_footer(text=f"Page 3/4 • Region: {self.region}")
         pages.append(np_embed)
         
-        # Page 4: Passives & Ascensions
+        # Page 4: Passives & Artwork
         passive_embed = discord.Embed(
             title=f"{self.servant['name']} - Passives & Materials",
             color=self.get_rarity_color()
         )
         
-        # Passive Skills
         passives = self.servant.get('classPassive', [])
         if passives:
             for passive in passives:
@@ -151,7 +134,6 @@ class ServantView(View):
                     inline=False
                 )
         
-        # Ascension materials
         ascension = self.servant.get('ascensionMaterials', {})
         if ascension:
             mats_text = []
@@ -162,21 +144,15 @@ class ServantView(View):
                 mats_text.append(f"Ascension {key}: {', '.join(item_names)} ({qp:,} QP)")
             
             if mats_text:
-                passive_embed.add_field(
-                    name="Ascension Materials",
-                    value="\n".join(mats_text),
-                    inline=False
-                )
+                passive_embed.add_field(name="Ascension Materials", value="\n".join(mats_text), inline=False)
         
-        # Artwork preview - handle nested structure
         chara_graph = self.assets.get('charaGraph', {})
         if chara_graph:
-            # Get ascension images
             asc_images = chara_graph.get('ascension', {})
             if asc_images and len(asc_images) > 0:
                 first_key = sorted(asc_images.keys())[0]
                 first_art = asc_images[first_key]
-                if self.is_valid_url(first_art):
+                if first_art and first_art.startswith('http'):
                     passive_embed.set_image(url=first_art)
         
         passive_embed.set_footer(text=f"Page 4/4 • Region: {self.region} • Use buttons to navigate")
@@ -185,19 +161,8 @@ class ServantView(View):
         return pages
     
     def get_rarity_color(self):
-        rarity_colors = {
-            5: 0xffd700,
-            4: 0xc0c0c0,
-            3: 0xcd7f32,
-            2: 0x8b4513,
-            1: 0x696969,
-            0: 0x2f4f4f
-        }
+        rarity_colors = {5: 0xffd700, 4: 0xc0c0c0, 3: 0xcd7f32, 2: 0x8b4513, 1: 0x696969, 0: 0x2f4f4f}
         return rarity_colors.get(self.servant.get('rarity', 3), 0x3498db)
-    
-    def is_valid_url(self, url):
-        """Check if URL is valid and not empty"""
-        return url and isinstance(url, str) and url.startswith('http')
     
     @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.grey)
     async def previous_button(self, interaction: discord.Interaction, button: Button):
@@ -223,27 +188,16 @@ class ServantCog(commands.Cog):
         self.api = None
     
     async def cog_load(self):
-        self.session = aiohttp.ClientSession()
-        self.api = AtlasAPI(self.session)
-    
-    async def cog_unload(self):
-        await self.session.close()
+        from utils.atlas_api import AtlasAPI
+        self.api = AtlasAPI(self.bot.session)
     
     @app_commands.command(name="servant", description="Search for FGO servant information")
-    @app_commands.describe(
-        name="Servant name to search for",
-        region="Game region (NA or JP)"
-    )
+    @app_commands.describe(name="Servant name to search for", region="Game region (NA or JP)")
     @app_commands.choices(region=[
         app_commands.Choice(name="North America", value="NA"),
         app_commands.Choice(name="Japan", value="JP")
     ])
-    async def servant_search(
-        self, 
-        interaction: discord.Interaction, 
-        name: str, 
-        region: app_commands.Choice[str] = "NA"
-    ):
+    async def servant_search(self, interaction: discord.Interaction, name: str, region: app_commands.Choice[str] = "NA"):
         await interaction.response.defer()
         
         region_code = region.value if isinstance(region, app_commands.Choice) else region
@@ -252,9 +206,7 @@ class ServantCog(commands.Cog):
             results = await self.api.search_servant(name, region_code)
             
             if not results:
-                await interaction.followup.send(
-                    f"❌ No servants found matching '{name}' in {region_code} region."
-                )
+                await interaction.followup.send(f"❌ No servants found matching '{name}' in {region_code} region.")
                 return
             
             if len(results) == 1:
@@ -265,7 +217,7 @@ class ServantCog(commands.Cog):
             await interaction.followup.send(f"❌ Error: {str(e)}")
     
     async def show_selection(self, interaction, results, region, command_type):
-        """Generic selection dropdown for both servant and artwork commands"""
+        """Generic selection dropdown"""
         embed = discord.Embed(
             title="Multiple Servants Found",
             description=f"Select a servant from the dropdown:",
@@ -275,11 +227,7 @@ class ServantCog(commands.Cog):
         for i, servant in enumerate(results[:5], 1):
             rarity = "★" * servant.get('rarity', 0)
             class_name = servant.get('className', 'Unknown')
-            embed.add_field(
-                name=f"{i}. {servant['name']}",
-                value=f"{class_name} {rarity}",
-                inline=False
-            )
+            embed.add_field(name=f"{i}. {servant['name']}", value=f"{class_name} {rarity}", inline=False)
         
         options = []
         for servant in results[:5]:
@@ -290,12 +238,7 @@ class ServantCog(commands.Cog):
                 value=str(servant['id'])
             ))
         
-        select = discord.ui.Select(
-            placeholder="Choose a servant...",
-            options=options,
-            min_values=1,
-            max_values=1
-        )
+        select = discord.ui.Select(placeholder="Choose a servant...", options=options, min_values=1, max_values=1)
         
         async def select_callback(interaction: discord.Interaction):
             await interaction.response.defer()
@@ -337,22 +280,12 @@ class ServantCog(commands.Cog):
             await interaction.followup.send(f"❌ Error displaying servant: {str(e)}")
     
     @app_commands.command(name="artwork", description="Display servant artwork/ascensions")
-    @app_commands.describe(
-        servant_name="Name of the servant",
-        ascension="Ascension level (1-4, or 0 for all)",
-        region="Game region"
-    )
+    @app_commands.describe(servant_name="Name of the servant", ascension="Ascension level (1-4, or 0 for all)", region="Game region")
     @app_commands.choices(region=[
         app_commands.Choice(name="North America", value="NA"),
         app_commands.Choice(name="Japan", value="JP")
     ])
-    async def artwork(
-        self,
-        interaction: discord.Interaction,
-        servant_name: str,
-        ascension: int = 4,
-        region: app_commands.Choice[str] = "NA"
-    ):
+    async def artwork(self, interaction: discord.Interaction, servant_name: str, ascension: int = 4, region: app_commands.Choice[str] = "NA"):
         await interaction.response.defer()
         
         region_code = region.value if isinstance(region, app_commands.Choice) else region
@@ -367,14 +300,12 @@ class ServantCog(commands.Cog):
             if len(results) == 1:
                 await self.display_artwork_by_id(interaction, results[0]['id'], region_code, ascension, results[0]['name'])
             else:
-                # Show selection with artwork command type
                 await self.show_selection(interaction, results, region_code, "artwork")
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {str(e)}")
     
     async def display_artwork(self, interaction: discord.Interaction, servant_id: int, region: str):
-        """Display artwork with default ascension 4 (called from dropdown)"""
-        # Get servant name first
+        """Display artwork with default ascension 4"""
         try:
             servant_data = await self.api.get_servant_details(servant_id, region)
             name = servant_data.get('name', 'Unknown') if servant_data else 'Unknown'
@@ -389,78 +320,61 @@ class ServantCog(commands.Cog):
             await interaction.response.defer()
         
         try:
-            # Get servant details for name if not provided
             if not servant_name:
                 servant_data = await self.api.get_servant_details(servant_id, region)
                 servant_name = servant_data.get('name', 'Unknown') if servant_data else 'Unknown'
             
-            # Get assets
             assets = await self.api.get_servant_assets(servant_id, region)
             
             if not assets:
                 await interaction.followup.send("❌ No assets found for this servant.")
                 return
             
-            # Handle nested structure - charaGraph contains ascension and costume
             chara_graph = assets.get('charaGraph', {})
             
             if not chara_graph:
                 await interaction.followup.send("❌ No artwork found for this servant.")
                 return
             
-            embed = discord.Embed(
-                title=f"{servant_name} - Artwork",
-                color=0xffd700
-            )
+            embed = discord.Embed(title=f"{servant_name} - Artwork", color=0xffd700)
             
-            # Get ascension images (main artwork)
             asc_images = chara_graph.get('ascension', {})
-            # Get costume images (if any)
             costume_images = chara_graph.get('costume', {})
             
             if ascension == 0:
-                # Show all ascensions as links
                 if asc_images:
                     desc_lines = []
                     for key in sorted(asc_images.keys()):
                         url = asc_images[key]
-                        if url and url.startswith('http'):
+                        if url and isinstance(url, str) and url.startswith('http'):
                             desc_lines.append(f"**Ascension {key}:** [View]({url})")
                     
                     if desc_lines:
-                        embed.description = "\n".join(desc_lines[:4])  # Max 4 to avoid too long msg
+                        embed.description = "\n".join(desc_lines[:4])
                     else:
                         embed.description = "No valid artwork URLs found."
                 
-                # Add costumes if available
                 if costume_images:
                     costume_lines = []
                     for key, url in list(costume_images.items())[:3]:
-                        if url and url.startswith('http'):
+                        if url and isinstance(url, str) and url.startswith('http'):
                             costume_lines.append(f"**Costume {key}:** [View]({url})")
                     if costume_lines:
                         embed.add_field(name="Costumes", value="\n".join(costume_lines), inline=False)
                 
                 await interaction.followup.send(embed=embed)
             else:
-                # Show specific ascension as large image
                 key = str(ascension)
                 url = None
                 
-                # Check if requested ascension exists
                 if key in asc_images:
                     url = asc_images[key]
                 elif asc_images:
-                    # Fallback to highest available ascension
                     highest = max(asc_images.keys(), key=lambda x: int(x) if str(x).isdigit() else 0)
                     url = asc_images[highest]
                     embed.description = f"Ascension Level {highest} (requested {ascension} not available)"
-                else:
-                    await interaction.followup.send("❌ No ascension artwork available.")
-                    return
                 
-                # Validate URL
-                if not url or not url.startswith('http'):
+                if not url or not isinstance(url, str) or not url.startswith('http'):
                     await interaction.followup.send("❌ Invalid artwork URL.")
                     return
                 
@@ -491,6 +405,179 @@ class ServantCog(commands.Cog):
                 embed.add_field(
                     name=s['name'],
                     value=f"{s.get('className', '?')} | {stars} | ID: {s['id']}",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
+    
+    # FUN FEATURES
+    
+    @app_commands.command(name="gacha", description="🎲 Roll the gacha!")
+    @app_commands.describe(quartz="Amount of Saint Quartz to spend (3 per roll)", banner="Choose your banner type")
+    @app_commands.choices(banner=[
+        app_commands.Choice(name="Story Banner", value="story"),
+        app_commands.Choice(name="Rate-Up SSR", value="rateup_ssr"),
+        app_commands.Choice(name="Rate-Up SR", value="rateup_sr")
+    ])
+    async def gacha(self, interaction: discord.Interaction, quartz: int = 30, banner: app_commands.Choice[str] = "story"):
+        """Fun gacha simulator"""
+        await interaction.response.defer()
+        
+        rates = {
+            "story": {"SSR": 0.01, "SR": 0.03},
+            "rateup_ssr": {"SSR": 0.008, "SR": 0.03},
+            "rateup_sr": {"SSR": 0.01, "SR": 0.024}
+        }
+        
+        banner_type = banner.value if isinstance(banner, app_commands.Choice) else banner
+        current_rates = rates.get(banner_type, rates["story"])
+        
+        rolls = min(quartz // 3, 100)
+        if rolls <= 0:
+            await interaction.followup.send("❌ You need at least 3 Saint Quartz for 1 roll!")
+            return
+        
+        results = {"SSR": 0, "SR": 0, "R": 0, "CE_SSR": 0, "CE_SR": 0, "CE_R": 0}
+        notable_rolls = []
+        
+        featured_ssr = ["Space Ishtar", "Gilgamesh", "Kama", "Morgan", "Oberon", "Artoria Caster"]
+        featured_sr = ["Ishtar", "Ereshkigal", "Gawain", "Lancelot", "Nitocris", "Heracles"]
+        
+        for _ in range(rolls):
+            roll = random.random()
+            
+            if roll < current_rates["SSR"]:
+                servant = random.choice(featured_ssr) if (banner_type == "rateup_ssr" and random.random() < 0.7) else "Random SSR"
+                results["SSR"] += 1
+                notable_rolls.append(f"⭐⭐⭐⭐⭐ **{servant}**")
+            elif roll < current_rates["SSR"] + current_rates["SR"]:
+                servant = random.choice(featured_sr) if (banner_type == "rateup_sr" and random.random() < 0.7) else "Random SR"
+                results["SR"] += 1
+                notable_rolls.append(f"⭐⭐⭐⭐ {servant}")
+            elif roll < current_rates["SSR"] + current_rates["SR"] + 0.40:
+                results["R"] += 1
+            else:
+                ce_roll = random.random()
+                if ce_roll < 0.04:
+                    results["CE_SSR"] += 1
+                elif ce_roll < 0.12:
+                    results["CE_SR"] += 1
+                else:
+                    results["CE_R"] += 1
+        
+        embed = discord.Embed(
+            title=f"🎲 Gacha Results ({rolls} rolls)",
+            description=f"Banner: {banner_type.replace('_', ' ').title()}",
+            color=0xffd700 if results["SSR"] > 0 else 0x3498db
+        )
+        
+        embed.add_field(name="⭐⭐⭐⭐⭐ SSR", value=results["SSR"], inline=True)
+        embed.add_field(name="⭐⭐⭐⭐ SR", value=results["SR"], inline=True)
+        embed.add_field(name="⭐⭐⭐ R", value=results["R"], inline=True)
+        embed.add_field(name="🎴 CEs", value=f"SSR: {results['CE_SSR']}, SR: {results['CE_SR']}, R: {results['CE_R']}", inline=False)
+        
+        if notable_rolls:
+            recent = "\n".join(notable_rolls[-5:])
+            embed.add_field(name="Notable Rolls", value=recent, inline=False)
+        
+        if results["SSR"] == 0 and rolls >= 30:
+            embed.set_footer(text="😢 No SSRs? The gacha is cruel... (330 rolls for guaranteed)")
+        elif results["SSR"] >= 2:
+            embed.set_footer(text="🎉 Jackpot! Excellent rolls!")
+        else:
+            embed.set_footer(text=f"SQ Used: {rolls * 3} | Good luck on your next rolls!")
+        
+        await interaction.followup.send(embed=embed)
+    
+    @app_commands.command(name="sqcalc", description="📊 Calculate Saint Quartz needed")
+    @app_commands.describe(target_np="Target NP level (1-5)", current_quartz="How many SQ you have", summon_tickets="How many tickets you have")
+    async def sqcalc(self, interaction: discord.Interaction, target_np: int = 1, current_quartz: int = 0, summon_tickets: int = 0):
+        """Calculate Saint Quartz needed for NP targets"""
+        
+        avg_rolls_per_ssr = 143
+        np_requirements = {1: 1, 2: 2, 3: 3, 4: 5, 5: 8}
+        
+        copies_needed = np_requirements.get(target_np, 1)
+        expected_rolls = copies_needed * avg_rolls_per_ssr
+        sq_needed = (expected_rolls * 3) - current_quartz - (summon_tickets * 3)
+        rolls_possible = (current_quartz // 3) + summon_tickets
+        
+        embed = discord.Embed(title="📊 Saint Quartz Calculator", color=0x9b59b6)
+        embed.add_field(name="Target", value=f"NP{target_np} ({copies_needed} copies)", inline=True)
+        embed.add_field(name="Expected Rolls", value=f"~{expected_rolls}", inline=True)
+        embed.add_field(name="Your Resources", value=f"{current_quartz} SQ + {summon_tickets} tickets = {rolls_possible} rolls", inline=True)
+        
+        if sq_needed > 0:
+            days = sq_needed // 3
+            embed.add_field(name="You Need", value=f"**{sq_needed}** more SQ (~{days} days of login)", inline=False)
+            embed.color = 0xe74c3c
+        else:
+            embed.add_field(name="Status", value="✅ You have enough! Good luck!", inline=False)
+            embed.color = 0x2ecc71
+        
+        embed.set_footer(text="Based on 1% SSR rate. Luck varies!")
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="daily", description="📅 Show today's daily quests")
+    async def daily(self, interaction: discord.Interaction):
+        """Show training grounds rotation"""
+        days = ["Archer/Assassin", "Lancer/Rider", "Saber/Caster", "Berserker/All", "Archer/Assassin", "Lancer/Rider", "Saber/Caster"]
+        today = days[datetime.datetime.now().weekday()]
+        
+        embed = discord.Embed(
+            title="📅 Today's Training Grounds",
+            description=f"**{today}**",
+            color=0x1abc9c
+        )
+        
+        embed.add_field(name="Ember Gathering", value="40 AP (Gold), 30 AP (Silver)", inline=False)
+        embed.add_field(name="QP Vault", value="40 AP (Super), 30 AP (Extreme)", inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="ce", description="Search for Craft Essences")
+    @app_commands.describe(name="CE name to search for", region="Game region")
+    @app_commands.choices(region=[
+        app_commands.Choice(name="North America", value="NA"),
+        app_commands.Choice(name="Japan", value="JP")
+    ])
+    async def ce_search(self, interaction: discord.Interaction, name: str, region: app_commands.Choice[str] = "NA"):
+        """Search for Craft Essences"""
+        await interaction.response.defer()
+        
+        region_code = region.value if isinstance(region, app_commands.Choice) else region
+        url = f"https://api.atlasacademy.io/nice/{region_code}/equip/search?name={name}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("❌ No CEs found.")
+                        return
+                    ces = await resp.json()
+            
+            if not ces:
+                await interaction.followup.send(f"No CEs found matching '{name}'")
+                return
+            
+            embed = discord.Embed(title="Craft Essence Results", color=0xff69b4)
+            
+            for ce in ces[:5]:
+                stars = "★" * ce.get('rarity', 0)
+                hp = ce.get('hpGrowth', [0])[-1] if ce.get('hpGrowth') else 0
+                atk = ce.get('atkGrowth', [0])[-1] if ce.get('atkGrowth') else 0
+                
+                skills = ce.get('skills', [])
+                effect = "No effect"
+                if skills:
+                    effect = skills[0].get('detail', 'Unknown')
+                    effect = re.sub(r'\[.*?\]', '', effect)[:100] + "..."
+                
+                embed.add_field(
+                    name=f"{ce['name']} {stars}",
+                    value=f"ATK: {atk} | HP: {hp}\n{effect}",
                     inline=False
                 )
             
