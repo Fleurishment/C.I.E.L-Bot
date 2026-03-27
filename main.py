@@ -40,7 +40,7 @@ class FGOBot(commands.Bot):
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching, 
-                name="over Chaldea | /servant"
+                name="Over you~ | /help"
             )
         )
     
