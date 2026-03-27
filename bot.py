@@ -5,6 +5,14 @@ import aiohttp
 import asyncio
 from typing import Optional, List, Dict
 from difflib import SequenceMatcher
+import os
+
+# Try to import requests as fallback
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 API_BASE = "https://api.atlasacademy.io"
 
@@ -12,45 +20,87 @@ class FGOBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.default(), help_command=None)
         self.session: Optional[aiohttp.ClientSession] = None
-        self.servants: List[Dict] = []  # Basic data cache
+        self.servants: List[Dict] = []
         self.ces: List[Dict] = []
+        self.data_loaded = False
+        self.load_error = None
         
     async def setup_hook(self):
-        # Create session with longer timeout
-        timeout = aiohttp.ClientTimeout(total=60, connect=30)
+        # Create session with very long timeout
+        timeout = aiohttp.ClientTimeout(total=120, connect=60)
         self.session = aiohttp.ClientSession(timeout=timeout)
         
-        # Load data in background
-        asyncio.create_task(self._load_data())
+        # Load data immediately and wait for it
+        print("Loading data...")
+        await self._load_data()
+        
+        if not self.data_loaded:
+            print(f"WARNING: Data not loaded: {self.load_error}")
+        
         await self.tree.sync()
+        print("Bot ready!")
         
     async def _load_data(self):
-        """Load data with retries"""
-        for attempt in range(3):
+        """Load data with multiple retries"""
+        max_attempts = 5
+        
+        for attempt in range(1, max_attempts + 1):
             try:
-                print(f"Loading data (attempt {attempt+1}/3)...")
+                print(f"Data load attempt {attempt}/{max_attempts}...")
                 
-                # Servants
-                async with self.session.get(f"{API_BASE}/basic/NA/servant") as resp:
-                    if resp.status == 200:
-                        self.servants = await resp.json()
-                        print(f"✅ Loaded {len(self.servants)} servants")
+                # Try aiohttp first
+                if self.session:
+                    try:
+                        async with self.session.get(f"{API_BASE}/basic/NA/servant", timeout=90) as resp:
+                            if resp.status == 200:
+                                self.servants = await resp.json()
+                                print(f"✅ Loaded {len(self.servants)} servants via aiohttp")
+                    except Exception as e:
+                        print(f"  aiohttp servants failed: {e}")
+                        # Try requests fallback
+                        if HAS_REQUESTS:
+                            try:
+                                resp = requests.get(f"{API_BASE}/basic/NA/servant", timeout=60)
+                                if resp.status_code == 200:
+                                    self.servants = resp.json()
+                                    print(f"✅ Loaded {len(self.servants)} servants via requests")
+                            except Exception as e2:
+                                print(f"  requests fallback failed: {e2}")
                 
-                # CEs
-                async with self.session.get(f"{API_BASE}/basic/NA/craft-essence") as resp:
-                    if resp.status == 200:
-                        self.ces = await resp.json()
-                        print(f"✅ Loaded {len(self.ces)} CEs")
+                # Load CEs
+                if self.servants:  # Only try CEs if servants worked
+                    try:
+                        async with self.session.get(f"{API_BASE}/basic/NA/craft-essence", timeout=90) as resp:
+                            if resp.status == 200:
+                                self.ces = await resp.json()
+                                print(f"✅ Loaded {len(self.ces)} CEs via aiohttp")
+                    except Exception as e:
+                        print(f"  aiohttp CEs failed: {e}")
+                        if HAS_REQUESTS:
+                            try:
+                                resp = requests.get(f"{API_BASE}/basic/NA/craft-essence", timeout=60)
+                                if resp.status_code == 200:
+                                    self.ces = resp.json()
+                                    print(f"✅ Loaded {len(self.ces)} CEs via requests")
+                            except Exception as e2:
+                                print(f"  requests CE fallback failed: {e2}")
                 
                 if self.servants:
-                    print("✅ Data ready!")
+                    self.data_loaded = True
+                    print("✅ Data loading complete!")
                     return
                     
             except Exception as e:
-                print(f"❌ Attempt {attempt+1} failed: {e}")
-                await asyncio.sleep(3)
+                self.load_error = str(e)
+                print(f"Attempt {attempt} error: {e}")
+            
+            # Wait before retry
+            if attempt < max_attempts:
+                wait_time = attempt * 3
+                print(f"Waiting {wait_time}s before retry...")
+                await asyncio.sleep(wait_time)
         
-        print("⚠️ Will use API fallback mode")
+        print("❌ All data load attempts failed")
     
     async def close(self):
         if self.session:
@@ -62,118 +112,97 @@ bot = FGOBot()
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-async def ensure_servants():
-    """Make sure we have servant data"""
-    if bot.servants:
-        return bot.servants
-    
-    # Fetch if not cached
-    try:
-        async with bot.session.get(f"{API_BASE}/basic/NA/servant") as resp:
-            if resp.status == 200:
-                bot.servants = await resp.json()
-                return bot.servants
-    except Exception as e:
-        print(f"Error fetching servants: {e}")
-    return []
-
-async def ensure_ces():
-    """Make sure we have CE data"""
-    if bot.ces:
-        return bot.ces
-    
-    try:
-        async with bot.session.get(f"{API_BASE}/basic/NA/craft-essence") as resp:
-            if resp.status == 200:
-                bot.ces = await resp.json()
-                return bot.ces
-    except Exception as e:
-        print(f"Error fetching CEs: {e}")
-    return []
-
 async def search_servant(query: str, region: str = "NA"):
-    """
-    Search servant by collectionNo (user ID) or name.
-    Returns nice data or None.
-    """
+    """Search with live API fallback"""
     query = query.strip()
     query_lower = query.lower()
     
-    # Get servant list
-    servants = await ensure_servants()
+    # Use cached data if available
+    servants = bot.servants if bot.servants else []
+    
+    # If no cache, try to fetch live
     if not servants:
-        print("ERROR: No servant data available")
-        return None
+        print("No cache, fetching live...")
+        try:
+            async with bot.session.get(f"{API_BASE}/basic/{region}/servant", timeout=60) as resp:
+                if resp.status == 200:
+                    servants = await resp.json()
+                    print(f"Live fetch: {len(servants)} servants")
+        except Exception as e:
+            print(f"Live fetch failed: {e}")
+            # Try requests
+            if HAS_REQUESTS:
+                try:
+                    resp = requests.get(f"{API_BASE}/basic/{region}/servant", timeout=30)
+                    if resp.status_code == 200:
+                        servants = resp.json()
+                except Exception as e2:
+                    print(f"Requests fallback failed: {e2}")
     
-    print(f"Searching for: '{query}' in {len(servants)} servants")
+    if not servants:
+        return None, "No data available"
     
-    # Try collectionNo first (what users type as ID)
+    # Try collectionNo (user-facing ID)
     if query.isdigit():
-        collection_no = int(query)
+        coll_no = int(query)
         for s in servants:
-            if s.get("collectionNo") == collection_no:
-                print(f"Found by collectionNo: {s['name']} (internal ID: {s['id']})")
+            if s.get("collectionNo") == coll_no:
                 # Get nice data
                 try:
-                    async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}") as resp:
+                    async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}", timeout=30) as resp:
                         if resp.status == 200:
-                            return await resp.json()
-                except Exception as e:
-                    print(f"Error fetching nice data: {e}")
-                # Return basic if nice fails
-                return s
-    
-    # Try internal ID (just in case)
-    if query.isdigit():
+                            return await resp.json(), None
+                except:
+                    pass
+                return s, None  # Return basic if nice fails
+        
+        # Try internal ID
         internal_id = int(query)
         for s in servants:
             if s.get("id") == internal_id:
-                print(f"Found by internal ID: {s['name']}")
                 try:
-                    async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{internal_id}") as resp:
+                    async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{internal_id}", timeout=30) as resp:
                         if resp.status == 200:
-                            return await resp.json()
+                            return await resp.json(), None
                 except:
                     pass
-                return s
+                return s, None
     
-    # Name search - Exact match
+    # Name searches
+    # Exact
     for s in servants:
         if s.get("name", "").lower() == query_lower:
-            print(f"Found exact match: {s['name']}")
             try:
-                async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}") as resp:
+                async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}", timeout=30) as resp:
                     if resp.status == 200:
-                        return await resp.json()
+                        return await resp.json(), None
             except:
                 pass
-            return s
+            return s, None
     
     # Starts with
     for s in servants:
         if s.get("name", "").lower().startswith(query_lower):
-            print(f"Found starts-with: {s['name']}")
             try:
-                async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}") as resp:
+                async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}", timeout=30) as resp:
                     if resp.status == 200:
-                        return await resp.json()
+                        return await resp.json(), None
             except:
                 pass
-            return s
+            return s, None
     
     # Contains
     for s in servants:
         if query_lower in s.get("name", "").lower():
-            print(f"Found contains: {s['name']}")
             try:
-                async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}") as resp:
+                async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{s['id']}", timeout=30) as resp:
                     if resp.status == 200:
-                        return await resp.json()
+                        return await resp.json(), None
             except:
                 pass
-            return s
+            return s, None
     
-    # Fuzzy match
+    # Fuzzy
     best = None
     best_score = 0
     for s in servants:
@@ -183,46 +212,48 @@ async def search_servant(query: str, region: str = "NA"):
             best = s
     
     if best:
-        print(f"Found fuzzy match ({best_score:.2f}): {best['name']}")
         try:
-            async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{best['id']}") as resp:
+            async with bot.session.get(f"{API_BASE}/nice/{region}/servant/{best['id']}", timeout=30) as resp:
                 if resp.status == 200:
-                    return await resp.json()
+                    return await resp.json(), None
         except:
             pass
-        return best
+        return best, None
     
-    print(f"No match found for: {query}")
-    return None
+    return None, "Not found"
 
 async def search_ce(query: str, region: str = "NA"):
-    """Search CE by collectionNo or name"""
+    """Search CE"""
     query = query.strip()
     query_lower = query.lower()
     
-    ces = await ensure_ces()
+    ces = bot.ces if bot.ces else []
+    
+    # Fetch if no cache
+    if not ces:
+        try:
+            async with bot.session.get(f"{API_BASE}/basic/{region}/craft-essence", timeout=60) as resp:
+                if resp.status == 200:
+                    ces = await resp.json()
+        except:
+            if HAS_REQUESTS:
+                try:
+                    resp = requests.get(f"{API_BASE}/basic/{region}/craft-essence", timeout=30)
+                    if resp.status_code == 200:
+                        ces = resp.json()
+                except:
+                    pass
+    
     if not ces:
         return None
     
-    # Try collectionNo first
+    # ID search (collectionNo or internal)
     if query.isdigit():
-        collection_no = int(query)
+        num = int(query)
         for c in ces:
-            if c.get("collectionNo") == collection_no:
+            if c.get("collectionNo") == num or c.get("id") == num:
                 try:
-                    async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}") as resp:
-                        if resp.status == 200:
-                            return await resp.json()
-                except:
-                    pass
-                return c
-        
-        # Try internal ID
-        internal_id = int(query)
-        for c in ces:
-            if c.get("id") == internal_id:
-                try:
-                    async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{internal_id}") as resp:
+                    async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}", timeout=30) as resp:
                         if resp.status == 200:
                             return await resp.json()
                 except:
@@ -233,7 +264,7 @@ async def search_ce(query: str, region: str = "NA"):
     for c in ces:
         if c.get("name", "").lower() == query_lower:
             try:
-                async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}") as resp:
+                async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}", timeout=30) as resp:
                     if resp.status == 200:
                         return await resp.json()
             except:
@@ -243,7 +274,7 @@ async def search_ce(query: str, region: str = "NA"):
     for c in ces:
         if c.get("name", "").lower().startswith(query_lower):
             try:
-                async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}") as resp:
+                async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}", timeout=30) as resp:
                     if resp.status == 200:
                         return await resp.json()
             except:
@@ -253,40 +284,22 @@ async def search_ce(query: str, region: str = "NA"):
     for c in ces:
         if query_lower in c.get("name", "").lower():
             try:
-                async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}") as resp:
+                async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{c['id']}", timeout=30) as resp:
                     if resp.status == 200:
                         return await resp.json()
             except:
                 pass
             return c
     
-    # Fuzzy
-    best = None
-    best_score = 0
-    for c in ces:
-        score = similarity(query, c.get("name", ""))
-        if score > best_score and score > 0.5:
-            best_score = score
-            best = c
-    
-    if best:
-        try:
-            async with bot.session.get(f"{API_BASE}/nice/{region}/craft-essence/{best['id']}") as resp:
-                if resp.status == 200:
-                    return await resp.json()
-        except:
-            pass
-        return best
-    
     return None
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot ready as {bot.user}")
-    print(f"Data cached: {len(bot.servants)} servants, {len(bot.ces)} CEs")
+    status = f"✅ Cache: {len(bot.servants)} servants, {len(bot.ces)} CEs" if bot.data_loaded else f"⚠️ No cache: {bot.load_error}"
+    print(f"Bot ready! {status}")
 
-@bot.tree.command(name="servant", description="Search servant by name or collection ID")
-@app_commands.describe(query="Name or ID (e.g., 1, Mash, 12, Gilgamesh)", region="NA or JP")
+@bot.tree.command(name="servant", description="Search servant")
+@app_commands.describe(query="Name or collection ID (1=Mash, 12=Artoria)", region="NA/JP")
 @app_commands.choices(region=[
     app_commands.Choice(name="North America", value="NA"),
     app_commands.Choice(name="Japan", value="JP")
@@ -294,89 +307,77 @@ async def on_ready():
 async def servant_cmd(interaction: discord.Interaction, query: str, region: str = "NA"):
     await interaction.response.defer(thinking=True)
     
-    try:
-        result = await search_servant(query, region)
-        
-        if not result:
-            await interaction.followup.send(
-                f"❌ Not found: **{query}**\n"
-                f"💡 Try: `1` (Mash), `12` (Artoria), `gilgamesh`, `mash`\n"
-                f"📊 Cache: {len(bot.servants)} servants loaded"
-            )
-            return
-        
-        # Build embed
-        embed = discord.Embed(
-            title=f"⭐ {result.get('name', 'Unknown')}",
-            description=f"{result.get('className', 'Unknown Class')} | Collection No. {result.get('collectionNo', 'N/A')}",
-            color=discord.Color.blue()
+    result, error = await search_servant(query, region)
+    
+    if not result:
+        cache_status = f"{len(bot.servants)} loaded" if bot.servants else "0 loaded (API issue)"
+        await interaction.followup.send(
+            f"❌ Not found: **{query}**\n"
+            f"💡 Try: `1`, `12`, `mash`, `gilgamesh`\n"
+            f"📊 Status: {cache_status}\n"
+            f"⚠️ If this persists, the API may be down"
         )
-        
-        # Image
-        img = None
-        if "extraAssets" in result:
-            if "charaGraph" in result["extraAssets"] and result["extraAssets"]["charaGraph"]:
-                asc = result["extraAssets"]["charaGraph"].get("ascension", {})
-                if asc:
-                    img = list(asc.values())[0]
-            elif "faces" in result["extraAssets"]:
-                faces = result["extraAssets"]["faces"]
-                if faces:
-                    img = list(faces.values())[0]
-        elif "face" in result:
-            img = result["face"]
-        
-        if img:
-            embed.set_thumbnail(url=img)
-        
-        # Stats
-        rarity = result.get("rarity", 1)
-        embed.add_field(name="Rarity", value="⭐" * rarity, inline=True)
-        embed.add_field(name="Cost", value=result.get("cost", "N/A"), inline=True)
-        
-        if "atkMax" in result:
-            embed.add_field(name="Max ATK", value=f"{result['atkMax']:,}", inline=True)
-        if "hpMax" in result:
-            embed.add_field(name="Max HP", value=f"{result['hpMax']:,}", inline=True)
-        
-        # Cards
-        if "cards" in result:
-            emojis = {"buster": "🔴", "arts": "🔵", "quick": "🟢"}
-            cards = " ".join([emojis.get(c, c.upper()) for c in result["cards"]])
-            embed.add_field(name="Command Cards", value=cards, inline=True)
-        
-        # Skills
-        if "skills" in result and result["skills"]:
-            skills_text = ""
-            for i in range(1, 4):
-                sk = next((s for s in result["skills"] if s.get("num") == i), None)
-                if sk:
-                    skills_text += f"**{i}.** {sk.get('name', 'N/A')}\n"
-            if skills_text:
-                embed.add_field(name="Skills", value=skills_text, inline=False)
-        
-        # NP
-        if "noblePhantasms" in result and result["noblePhantasms"]:
-            np = result["noblePhantasms"][0]
-            embed.add_field(
-                name=f"NP [{np.get('card', '').upper()}]",
-                value=np.get("name", "Unknown"),
-                inline=False
-            )
-        
-        # Traits
-        if "traits" in result and result["traits"]:
-            traits = ", ".join([t.get("name", "") for t in result["traits"][:3]])
-            embed.set_footer(text=f"Traits: {traits}")
-        
-        await interaction.followup.send(embed=embed)
-        
-    except Exception as e:
-        print(f"Error: {e}")
-        await interaction.followup.send(f"❌ Error: {str(e)}")
+        return
+    
+    # Build embed
+    embed = discord.Embed(
+        title=f"⭐ {result.get('name', 'Unknown')}",
+        description=f"{result.get('className', 'Unknown')} | Coll. No. {result.get('collectionNo', 'N/A')}",
+        color=discord.Color.blue()
+    )
+    
+    # Image
+    img = None
+    if "extraAssets" in result:
+        if "charaGraph" in result["extraAssets"]:
+            asc = result["extraAssets"]["charaGraph"].get("ascension", {})
+            if asc:
+                img = list(asc.values())[0]
+        elif "faces" in result["extraAssets"]:
+            faces = result["extraAssets"]["faces"]
+            if faces:
+                img = list(faces.values())[0]
+    elif "face" in result:
+        img = result["face"]
+    
+    if img:
+        embed.set_thumbnail(url=img)
+    
+    # Stats
+    rarity = result.get("rarity", 1)
+    embed.add_field(name="Rarity", value="⭐" * rarity, inline=True)
+    embed.add_field(name="Cost", value=result.get("cost", "N/A"), inline=True)
+    
+    if "atkMax" in result:
+        embed.add_field(name="Max ATK", value=f"{result['atkMax']:,}", inline=True)
+    if "hpMax" in result:
+        embed.add_field(name="Max HP", value=f"{result['hpMax']:,}", inline=True)
+    
+    # Cards
+    if "cards" in result:
+        emojis = {"buster": "🔴", "arts": "🔵", "quick": "🟢"}
+        cards = " ".join([emojis.get(c, c.upper()) for c in result["cards"]])
+        embed.add_field(name="Cards", value=cards, inline=True)
+    
+    # Skills
+    if "skills" in result and result["skills"]:
+        skills_text = ""
+        for i in range(1, 4):
+            sk = next((s for s in result["skills"] if s.get("num") == i), None)
+            if sk:
+                skills_text += f"**{i}.** {sk.get('name', 'N/A')}\n"
+        if skills_text:
+            embed.add_field(name="Skills", value=skills_text, inline=False)
+    
+    # NP
+    if "noblePhantasms" in result and result["noblePhantasms"]:
+        np = result["noblePhantasms"][0]
+        embed.add_field(name=f"NP [{np.get('card', '').upper()}]", value=np.get("name", "Unknown"), inline=False)
+    
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="ce", description="Search Craft Essence")
-@app_commands.describe(query="Name or ID", region="NA or JP")
+@app_commands.describe(query="Name or ID", region="NA/JP")
 @app_commands.choices(region=[
     app_commands.Choice(name="NA", value="NA"),
     app_commands.Choice(name="JP", value="JP")
@@ -396,7 +397,6 @@ async def ce_cmd(interaction: discord.Interaction, query: str, region: str = "NA
         color=discord.Color.gold()
     )
     
-    # Image
     img = None
     if "extraAssets" in result and "equip" in result["extraAssets"]:
         equip = result["extraAssets"]["equip"]
@@ -416,7 +416,6 @@ async def ce_cmd(interaction: discord.Interaction, query: str, region: str = "NA
     if "hpMax" in result:
         embed.add_field(name="Max HP", value=f"{result['hpMax']:,}", inline=True)
     
-    # Effects
     if "skills" in result and result["skills"]:
         effects = []
         for skill in result["skills"]:
@@ -430,7 +429,7 @@ async def ce_cmd(interaction: discord.Interaction, query: str, region: str = "NA
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="skills", description="Show all 3 skills")
-@app_commands.describe(servant_name="Name or ID", region="NA or JP")
+@app_commands.describe(servant_name="Name or ID", region="NA/JP")
 @app_commands.choices(region=[
     app_commands.Choice(name="NA", value="NA"),
     app_commands.Choice(name="JP", value="JP")
@@ -438,33 +437,25 @@ async def ce_cmd(interaction: discord.Interaction, query: str, region: str = "NA
 async def skills_cmd(interaction: discord.Interaction, servant_name: str, region: str = "NA"):
     await interaction.response.defer(thinking=True)
     
-    servant = await search_servant(servant_name, region)
+    result, _ = await search_servant(servant_name, region)
     
-    if not servant:
+    if not result:
         await interaction.followup.send(f"❌ Not found: {servant_name}")
         return
     
-    if "skills" not in servant or not servant["skills"]:
-        await interaction.followup.send("❌ No skill data available")
+    if "skills" not in result or not result["skills"]:
+        await interaction.followup.send("❌ No skill data")
         return
     
-    # Header
-    header = discord.Embed(
-        title=f"🎯 {servant['name']} - Skills",
-        color=discord.Color.red()
-    )
+    header = discord.Embed(title=f"🎯 {result['name']} - Skills", color=discord.Color.red())
     await interaction.followup.send(embed=header)
     
-    # Each skill
     for i in range(1, 4):
-        skill = next((s for s in servant["skills"] if s.get("num") == i), None)
+        skill = next((s for s in result["skills"] if s.get("num") == i), None)
         if not skill:
             continue
         
-        embed = discord.Embed(
-            title=f"Skill {i}: {skill.get('name', 'Unknown')}",
-            color=discord.Color.dark_red()
-        )
+        embed = discord.Embed(title=f"Skill {i}: {skill.get('name', 'Unknown')}", color=discord.Color.dark_red())
         
         if "icon" in skill:
             embed.set_thumbnail(url=skill["icon"])
@@ -481,11 +472,11 @@ async def skills_cmd(interaction: discord.Interaction, servant_name: str, region
         await interaction.channel.send(embed=embed)
         await asyncio.sleep(0.3)
 
-@bot.tree.command(name="art", description="Show all artwork")
+@bot.tree.command(name="art", description="Show artwork")
 @app_commands.describe(query="Name or ID", type="Type", region="Region")
 @app_commands.choices(type=[
     app_commands.Choice(name="Servant", value="servant"),
-    app_commands.Choice(name="Craft Essence", value="ce")
+    app_commands.Choice(name="CE", value="ce")
 ], region=[
     app_commands.Choice(name="NA", value="NA"),
     app_commands.Choice(name="JP", value="JP")
@@ -494,7 +485,7 @@ async def art_cmd(interaction: discord.Interaction, query: str, type: str, regio
     await interaction.response.defer(thinking=True)
     
     if type == "servant":
-        data = await search_servant(query, region)
+        data, _ = await search_servant(query, region)
     else:
         data = await search_ce(query, region)
     
@@ -502,7 +493,6 @@ async def art_cmd(interaction: discord.Interaction, query: str, type: str, regio
         await interaction.followup.send(f"❌ Not found: {query}")
         return
     
-    # Collect images
     images = {}
     if type == "servant":
         if "extraAssets" in data and "charaGraph" in data["extraAssets"]:
@@ -538,36 +528,58 @@ async def art_cmd(interaction: discord.Interaction, query: str, type: str, regio
 @bot.tree.command(name="help", description="Show help")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="📖 FGO Atlas Bot",
-        description="Search FGO game data",
+        title="📖t",
+        description="Search FGO game data from Atlas Academy",
         color=discord.Color.green()
     )
     
     embed.add_field(
         name="Commands",
         value=(
-            "`/servant <name/id>` - Find servant\n"
-            "`/ce <name/id>` - Find CE\n"
-            "`/skills <name>` - All 3 skills\n"
-            "`/art <name> type:servant/ce` - Artwork"
+            "`/servant <name/id>` - Find servant (e.g., `1`, `Mash`, `12`)\n"
+            "`/ce <name/id>` - Find Craft Essence\n"
+            "`/skills <name>` - Show all 3 skills\n"
+            "`/art <name> type:servant/ce` - Show all artwork"
         ),
         inline=False
     )
     
     embed.add_field(
-        name="Search Tips",
-        value=(
-            "• Use **collection number**: `1` = Mash, `12` = Artoria\n"
-            "• Not case-sensitive: `mash` = `Mash`\n"
-            "• Partial names: `gil` finds Gilgamesh"
-        ),
+        name="Collection IDs",
+        value="`1` = Mash Kyrielight\n`12` = Artoria Pendragon (Saber)\n`200100` = Gilgamesh",
         inline=False
     )
     
+    embed.add_field(
+        name="Search Tips",
+        value="• Not case-sensitive\n• Partial names work\n• Use IDs for exact matches",
+        inline=False
+    )
+    
+    cache_status = f"✅ {len(bot.servants)} servants cached" if bot.servants else "⚠️ Using live API"
+    embed.set_footer(text=cache_status)
+    
     await interaction.response.send_message(embed=embed)
 
-import os
+@bot.tree.command(name="reload", description="Force reload data cache")
+async def reload_cmd(interaction: discord.Interaction):
+    """Admin command to reload cache"""
+    await interaction.response.defer(thinking=True)
+    
+    await interaction.followup.send("🔄 Reloading data...")
+    bot.servants = []
+    bot.ces = []
+    bot.data_loaded = False
+    
+    await bot._load_data()
+    
+    if bot.data_loaded:
+        await interaction.channel.send(f"✅ Reloaded! {len(bot.servants)} servants, {len(bot.ces)} CEs")
+    else:
+        await interaction.channel.send(f"❌ Reload failed: {bot.load_error}")
+
+# Run
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
-    raise ValueError("No DISCORD_TOKEN!")
+    raise ValueError("Set DISCORD_TOKEN environment variable!")
 bot.run(TOKEN)
