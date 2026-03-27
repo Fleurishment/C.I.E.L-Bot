@@ -68,18 +68,17 @@ class ServantView(View):
             skill_rank = skill.get('rank', '-')
             cooldown = skill.get('coolDown', [0, 0])
             
-            # Get skill effects
-            functions = skill.get('functions', [])
-            effects = []
-            for func in functions:
-                effect = func.get('popupText', func.get('funcType', 'Unknown effect'))
-                effects.append(effect)
-            
-            effect_text = "\n".join(effects[:3]) if effects else "No description available"
+            # Get actual skill description
+            detail = skill.get('detail', 'No description available')
+            # Clean up description - replace [g][o] style tags if present
+            import re
+            detail = re.sub(r'\[.*?\]', '', detail)  # Remove square bracket tags
+            detail = detail.replace('&lt;', '<').replace('&gt;', '>')  # Fix HTML entities
+            detail = detail[:200] + "..." if len(detail) > 200 else detail
             
             skills_embed.add_field(
                 name=f"Skill {i}: {skill_name} {skill_rank}",
-                value=f"**Cooldown:** {cooldown[0]}-{cooldown[-1]} turns\n{effect_text}",
+                value=f"**Cooldown:** {cooldown[0]}-{cooldown[-1]} turns\n{detail}",
                 inline=False
             )
         
@@ -101,30 +100,33 @@ class ServantView(View):
             np_embed.add_field(name="Name", value=f"{np_name} {np_rank}", inline=True)
             np_embed.add_field(name="Card Type", value=np_type, inline=True)
             
-            # NP Effects
+            # Get NP description
+            np_detail = np_data.get('detail', 'No description available')
+            np_detail = re.sub(r'\[.*?\]', '', np_detail)
+            np_detail = np_detail.replace('&lt;', '<').replace('&gt;', '>')
+            np_detail = np_detail[:300] + "..." if len(np_detail) > 300 else np_detail
+            
+            np_embed.add_field(
+                name="Description",
+                value=np_detail,
+                inline=False
+            )
+            
+            # Overcharge effects if available
             np_functions = np_data.get('functions', [])
-            np_effects = []
-            for func in np_functions:
-                effect = func.get('popupText', func.get('funcType', ''))
-                if effect:
-                    np_effects.append(f"• {effect}")
-            
-            if np_effects:
-                np_embed.add_field(
-                    name="Effects", 
-                    value="\n".join(np_effects[:5]) or "No effects listed", 
-                    inline=False
-                )
-            
-            # Level values if available
-            levels = np_data.get('functions', [])
-            if levels and len(levels) > 0:
-                svals = levels[0].get('svals', [])
-                if svals:
+            if np_functions:
+                effects = []
+                for func in np_functions:
+                    svals = func.get('svals', [])
+                    if svals:
+                        effect_text = func.get('popupText', func.get('funcType', 'Effect'))
+                        if effect_text and effect_text not in ['addState', 'damage']:
+                            effects.append(f"• {effect_text}")
+                if effects:
                     np_embed.add_field(
-                        name="Level Scaling",
-                        value=f"LV1: {svals[0]}\nLV5: {svals[-1] if len(svals) > 4 else svals[0]}",
-                        inline=True
+                        name="Effects",
+                        value="\n".join(effects[:3]) or "See description",
+                        inline=False
                     )
         
         np_embed.set_footer(text=f"Page 3/4 • Region: {self.region}")
@@ -139,31 +141,29 @@ class ServantView(View):
         # Passive Skills
         passives = self.servant.get('classPassive', [])
         if passives:
-            passive_text = []
             for passive in passives:
                 p_name = passive.get('name', 'Unknown')
-                p_skill = passive.get('skill', {})
-                p_detail = p_skill.get('detail', 'No description')
-                passive_text.append(f"**{p_name}**: {p_detail[:100]}...")
-            
-            passive_embed.add_field(
-                name="Passive Skills",
-                value="\n".join(passive_text) or "None",
-                inline=False
-            )
+                p_detail = passive.get('detail', 'No description')
+                p_detail = re.sub(r'\[.*?\]', '', p_detail)
+                passive_embed.add_field(
+                    name=f"Passive: {p_name}",
+                    value=p_detail[:100] + "..." if len(p_detail) > 100 else p_detail,
+                    inline=False
+                )
         
-        # Ascension materials (if available in nice data)
+        # Ascension materials
         ascension = self.servant.get('ascensionMaterials', {})
         if ascension:
             mats_text = []
             for key, value in list(ascension.items())[:2]:
                 items = value.get('items', [])
                 item_names = [item.get('name', 'Unknown') for item in items[:3]]
-                mats_text.append(f"Ascension {key}: {', '.join(item_names)}")
+                qp = value.get('qp', 0)
+                mats_text.append(f"Ascension {key}: {', '.join(item_names)} ({qp:,} QP)")
             
             if mats_text:
                 passive_embed.add_field(
-                    name="Ascension Materials (Sample)",
+                    name="Ascension Materials",
                     value="\n".join(mats_text),
                     inline=False
                 )
@@ -172,7 +172,9 @@ class ServantView(View):
         if self.assets.get('charaGraph', {}):
             cards = self.assets['charaGraph']
             if isinstance(cards, dict) and len(cards) > 0:
-                first_art = list(cards.values())[0]
+                # Get first available ascension
+                first_key = sorted(cards.keys())[0]
+                first_art = cards[first_key]
                 passive_embed.set_image(url=first_art)
         
         passive_embed.set_footer(text=f"Page 4/4 • Region: {self.region} • Use buttons to navigate")
@@ -182,9 +184,9 @@ class ServantView(View):
     
     def get_rarity_color(self):
         rarity_colors = {
-            5: 0xffd700,  # Gold
-            4: 0xc0c0c0,  # Silver
-            3: 0xcd7f32,  # Bronze
+            5: 0xffd700,
+            4: 0xc0c0c0,
+            3: 0xcd7f32,
             2: 0x8b4513,
             1: 0x696969,
             0: 0x2f4f4f
@@ -240,21 +242,21 @@ class ServantCog(commands.Cog):
         
         region_code = region.value if isinstance(region, app_commands.Choice) else region
         
-        # Search for servants
-        results = await self.api.search_servant(name, region_code)
-        
-        if not results:
-            await interaction.followup.send(
-                f"❌ No servants found matching '{name}' in {region_code} region."
-            )
-            return
-        
-        if len(results) == 1:
-            # Direct display if only one result
-            await self.display_servant(interaction, results[0]['id'], region_code)
-        else:
-            # Show selection menu if multiple results
-            await self.show_servant_selection(interaction, results, region_code)
+        try:
+            results = await self.api.search_servant(name, region_code)
+            
+            if not results:
+                await interaction.followup.send(
+                    f"❌ No servants found matching '{name}' in {region_code} region."
+                )
+                return
+            
+            if len(results) == 1:
+                await self.display_servant(interaction, results[0]['id'], region_code)
+            else:
+                await self.show_servant_selection(interaction, results, region_code)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
     
     async def show_servant_selection(self, interaction, results, region):
         """Show dropdown for multiple servant matches"""
@@ -273,7 +275,6 @@ class ServantCog(commands.Cog):
                 inline=False
             )
         
-        # Create select menu
         options = []
         for servant in results[:5]:
             rarity = "★" * servant.get('rarity', 0)
@@ -291,7 +292,6 @@ class ServantCog(commands.Cog):
         )
         
         async def select_callback(interaction: discord.Interaction):
-            # Defer the interaction immediately to prevent timeout
             await interaction.response.defer()
             try:
                 servant_id = int(select.values[0])
@@ -308,24 +308,24 @@ class ServantCog(commands.Cog):
     
     async def display_servant(self, interaction: discord.Interaction, servant_id: int, region: str):
         """Fetch and display detailed servant information"""
-        # Check if interaction was already responded to
         if not interaction.response.is_done():
             await interaction.response.defer()
         
-        servant_data = await self.api.get_servant_details(servant_id, region)
-        
-        if not servant_data:
-            await interaction.followup.send("❌ Failed to fetch servant details.")
-            return
-        
-        # Get assets
-        assets = await self.api.get_servant_assets(servant_id, region)
-        
-        # Create paginated view
-        view = ServantView(servant_data, assets, region)
-        pages = view.get_pages()
-        
-        await interaction.followup.send(embed=pages[0], view=view)
+        try:
+            servant_data = await self.api.get_servant_details(servant_id, region)
+            
+            if not servant_data:
+                await interaction.followup.send("❌ Failed to fetch servant details.")
+                return
+            
+            assets = await self.api.get_servant_assets(servant_id, region)
+            
+            view = ServantView(servant_data, assets, region)
+            pages = view.get_pages()
+            
+            await interaction.followup.send(embed=pages[0], view=view)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error displaying servant: {str(e)}")
     
     @app_commands.command(name="artwork", description="Display servant artwork/ascensions")
     @app_commands.describe(
@@ -344,45 +344,60 @@ class ServantCog(commands.Cog):
         ascension: int = 4,
         region: app_commands.Choice[str] = "NA"
     ):
+        # Defer immediately to prevent timeout
         await interaction.response.defer()
         
         region_code = region.value if isinstance(region, app_commands.Choice) else region
         
-        results = await self.api.search_servant(servant_name, region_code)
-        if not results:
-            await interaction.followup.send(f"❌ No servant found matching '{servant_name}'")
-            return
-        
-        servant_id = results[0]['id']
-        assets = await self.api.get_servant_assets(servant_id, region_code)
-        chara_graph = assets.get('charaGraph', {})
-        
-        if not chara_graph:
-            await interaction.followup.send("❌ No artwork found for this servant.")
-            return
-        
-        embed = discord.Embed(
-            title=f"{results[0]['name']} - Artwork",
-            color=0xffd700
-        )
-        
-        # Get specific ascension or max available
-        if ascension == 0:
-            # Show all
-            for key, url in list(chara_graph.items())[:4]:
-                embed.add_field(name=f"Ascension {key}", value=f"[View Image]({url})", inline=True)
-        else:
-            key = str(ascension)
-            if key in chara_graph:
-                embed.set_image(url=chara_graph[key])
-                embed.description = f"Ascension Level {ascension}"
+        try:
+            results = await self.api.search_servant(servant_name, region_code)
+            
+            if not results:
+                await interaction.followup.send(f"❌ No servant found matching '{servant_name}'")
+                return
+            
+            # Use exact match if available, otherwise first result
+            servant = None
+            for r in results:
+                if servant_name.lower() in r['name'].lower():
+                    servant = r
+                    break
+            if not servant:
+                servant = results[0]
+            
+            servant_id = servant['id']
+            assets = await self.api.get_servant_assets(servant_id, region_code)
+            chara_graph = assets.get('charaGraph', {})
+            
+            if not chara_graph:
+                await interaction.followup.send("❌ No artwork found for this servant.")
+                return
+            
+            embed = discord.Embed(
+                title=f"{servant['name']} - Artwork",
+                color=0xffd700
+            )
+            
+            if ascension == 0:
+                # Show all ascensions
+                for key, url in sorted(chara_graph.items())[:4]:
+                    embed.add_field(name=f"Ascension {key}", value=f"[View Image]({url})", inline=True)
+                await interaction.followup.send(embed=embed)
             else:
-                # Fallback to highest available
-                highest = max(chara_graph.keys(), key=lambda x: int(x) if x.isdigit() else 0)
-                embed.set_image(url=chara_graph[highest])
-                embed.description = f"Ascension Level {highest} (requested {ascension} not available)"
-        
-        await interaction.followup.send(embed=embed)
+                # Show specific ascension
+                key = str(ascension)
+                if key in chara_graph:
+                    embed.set_image(url=chara_graph[key])
+                    embed.description = f"Ascension Level {ascension}"
+                else:
+                    # Fallback to highest available
+                    highest = max(chara_graph.keys(), key=lambda x: int(x) if str(x).isdigit() else 0)
+                    embed.set_image(url=chara_graph[highest])
+                    embed.description = f"Ascension Level {highest} (requested {ascension} not available)"
+                await interaction.followup.send(embed=embed)
+                
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error fetching artwork: {str(e)}")
     
     @app_commands.command(name="search", description="Search servants by name (API only)")
     @app_commands.describe(name="Servant name")
@@ -390,21 +405,24 @@ class ServantCog(commands.Cog):
         """Quick search without scraping"""
         await interaction.response.defer()
         
-        results = await self.api.search_servant(name, "NA")
-        if not results:
-            await interaction.followup.send(f"No results for '{name}'")
-            return
-        
-        embed = discord.Embed(title="Search Results", color=0x00ff00)
-        for s in results[:5]:
-            stars = "★" * s.get('rarity', 0)
-            embed.add_field(
-                name=s['name'],
-                value=f"{s.get('className', '?')} | {stars} | ID: {s['id']}",
-                inline=False
-            )
-        
-        await interaction.followup.send(embed=embed)
+        try:
+            results = await self.api.search_servant(name, "NA")
+            if not results:
+                await interaction.followup.send(f"No results for '{name}'")
+                return
+            
+            embed = discord.Embed(title="Search Results", color=0x00ff00)
+            for s in results[:5]:
+                stars = "★" * s.get('rarity', 0)
+                embed.add_field(
+                    name=s['name'],
+                    value=f"{s.get('className', '?')} | {stars} | ID: {s['id']}",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
 
 async def setup(bot):
     await bot.add_cog(ServantCog(bot))
