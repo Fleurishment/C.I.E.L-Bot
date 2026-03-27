@@ -256,7 +256,7 @@ class ServantCog(commands.Cog):
             # Show selection menu if multiple results
             await self.show_servant_selection(interaction, results, region_code)
     
-        async def show_servant_selection(self, interaction, results, region):
+    async def show_servant_selection(self, interaction, results, region):
         """Show dropdown for multiple servant matches"""
         embed = discord.Embed(
             title="Multiple Servants Found",
@@ -291,7 +291,7 @@ class ServantCog(commands.Cog):
         )
         
         async def select_callback(interaction: discord.Interaction):
-            # This is a NEW interaction from the dropdown, so we defer it
+            # Defer the interaction immediately to prevent timeout
             await interaction.response.defer()
             try:
                 servant_id = int(select.values[0])
@@ -301,45 +301,12 @@ class ServantCog(commands.Cog):
         
         select.callback = select_callback
         
-        view = discord.ui.View(timeout=120)  # Increased timeout
-        view.add_item(select)
-        
-        await interaction.followup.send(embed=embed, view=view)
-        
-        options = []
-        for i, servant in enumerate(results[:10], 1):  # Limit to 10
-            rarity = "★" * servant.get('rarity', 0)
-            class_name = servant.get('className', 'Unknown')
-            embed.add_field(
-                name=f"{i}. {servant['name']}",
-                value=f"{class_name} {rarity}",
-                inline=False
-            )
-            
-            options.append(discord.SelectOption(
-                label=f"{servant['name'][:25]}",
-                description=f"{class_name} {rarity}",
-                value=str(servant['id'])
-            ))
-        
-        # Create select menu
-        select = discord.ui.Select(
-            placeholder="Choose a servant...",
-            options=options
-        )
-        
-        async def select_callback(interaction: discord.Interaction):
-            servant_id = int(select.values[0])
-            await self.display_servant(interaction, servant_id, region)
-        
-        select.callback = select_callback
-        
-        view = discord.ui.View()
+        view = discord.ui.View(timeout=120)
         view.add_item(select)
         
         await interaction.followup.send(embed=embed, view=view)
     
-       async def display_servant(self, interaction: discord.Interaction, servant_id: int, region: str):
+    async def display_servant(self, interaction: discord.Interaction, servant_id: int, region: str):
         """Fetch and display detailed servant information"""
         # Check if interaction was already responded to
         if not interaction.response.is_done():
@@ -414,6 +381,28 @@ class ServantCog(commands.Cog):
                 highest = max(chara_graph.keys(), key=lambda x: int(x) if x.isdigit() else 0)
                 embed.set_image(url=chara_graph[highest])
                 embed.description = f"Ascension Level {highest} (requested {ascension} not available)"
+        
+        await interaction.followup.send(embed=embed)
+    
+    @app_commands.command(name="search", description="Search servants by name (API only)")
+    @app_commands.describe(name="Servant name")
+    async def search(self, interaction: discord.Interaction, name: str):
+        """Quick search without scraping"""
+        await interaction.response.defer()
+        
+        results = await self.api.search_servant(name, "NA")
+        if not results:
+            await interaction.followup.send(f"No results for '{name}'")
+            return
+        
+        embed = discord.Embed(title="Search Results", color=0x00ff00)
+        for s in results[:5]:
+            stars = "★" * s.get('rarity', 0)
+            embed.add_field(
+                name=s['name'],
+                value=f"{s.get('className', '?')} | {stars} | ID: {s['id']}",
+                inline=False
+            )
         
         await interaction.followup.send(embed=embed)
 
