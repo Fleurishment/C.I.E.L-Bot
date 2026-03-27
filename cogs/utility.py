@@ -21,7 +21,7 @@ class UtilityCog(commands.Cog):
     @app_commands.command(name="help", description="Show all available commands")
     async def help_command(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="📚 FGO Bot Commands",
+            title="C.I.E.L Commands",
             description="Your Chaldea Assistant - All commands use official Atlas Academy API",
             color=0x3498db
         )
