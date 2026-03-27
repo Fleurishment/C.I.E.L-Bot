@@ -16,11 +16,15 @@ class FGOBot(commands.Bot):
             intents=intents,
             help_command=None
         )
+        self.session = None
     
     async def setup_hook(self):
-        # Load all cogs
+        # Create session for API calls
+        import aiohttp
+        self.session = aiohttp.ClientSession()
+        
+        # Load ONLY these cogs (removed scraper)
         await self.load_extension('cogs.servant')
-        await self.load_extension('cogs.scraper')
         await self.load_extension('cogs.utility')
         
         # Sync slash commands
@@ -40,10 +44,10 @@ class FGOBot(commands.Bot):
             )
         )
     
-    async def on_command_error(self, ctx, error):
-        if isinstance(error, commands.CommandNotFound):
-            return
-        print(f"Command error: {error}")
+    async def close(self):
+        if self.session:
+            await self.session.close()
+        await super().close()
 
 async def main():
     async with FGOBot() as bot:
