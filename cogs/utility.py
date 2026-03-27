@@ -22,29 +22,29 @@ class UtilityCog(commands.Cog):
     async def help_command(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="📚 FGO Bot Commands",
-            description="Your Chaldea Assistant",
+            description="Your Chaldea Assistant - All commands use official Atlas Academy API",
             color=0x3498db
         )
         
-        # Atlas API Commands
+        # Servant Lookup Commands
         embed.add_field(
-            name="🔍 Servant Lookup (Atlas API)",
+            name="🔍 Servant Lookup",
             value=(
-                "`/servant <name>` - Full servant details (stats, skills, NP)\n"
-                "`/artwork <name>` - Servant artwork and ascensions"
+                "`/servant <name>` - Full servant details with stats, skills, NP\n"
+                "`/artwork <name> [ascension]` - View servant artwork (1-4)\n"
+                "`/search <name>` - Quick search multiple results\n"
+                "`/ce <name>` - Search Craft Essences"
             ),
             inline=False
         )
         
-        # Web Scraping Commands
+        # Fun Tools
         embed.add_field(
-            name="🌐 Wiki Scraping",
+            name="🎮 Fun & Tools",
             value=(
-                "`/lore <name>` - Servant lore from Fandom Wiki\n"
-                "`/rating <name>` - GamePress tier ratings and analysis\n"
-                "`/events` - Current and upcoming events\n"
-                "`/tierlist` - GamePress tier list overview\n"
-                "`/farm <material>` - Material farming locations"
+                "`/gacha [quartz] [banner]` - Gacha roll simulator\n"
+                "`/sqcalc [target_np] [quartz] [tickets]` - Calculate SQ needed\n"
+                "`/daily` - Show today's training grounds rotation"
             ),
             inline=False
         )
@@ -53,13 +53,25 @@ class UtilityCog(commands.Cog):
         embed.add_field(
             name="⚙️ Utility",
             value=(
-                "`/ping` - Check bot status\n"
+                "`/ping` - Check bot status & latency\n"
                 "`/help` - Show this message"
             ),
             inline=False
         )
         
-        embed.set_footer(text="Data sources: Atlas Academy API, Fandom Wiki, GamePress")
+        # Tips
+        embed.add_field(
+            name="💡 Tips",
+            value=(
+                "• Servant commands support both NA and JP regions\n"
+                "• For `/artwork`, use `ascension: 0` to see all ascensions as links\n"
+                "• The gacha simulator uses realistic 1% SSR rates with pity system\n"
+                "• All data is fetched live from Atlas Academy API"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="FGO Bot | Data provided by Atlas Academy API")
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
