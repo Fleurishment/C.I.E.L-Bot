@@ -38,13 +38,31 @@ class UtilityCog(commands.Cog):
             inline=False
         )
         
-        # Fun Tools
+        # FGO Tools
         embed.add_field(
-            name="🎮 Fun & Tools",
+            name="🎮 FGO Tools",
             value=(
                 "`/gacha [quartz] [banner]` - Gacha roll simulator\n"
                 "`/sqcalc [target_np] [quartz] [tickets]` - Calculate SQ needed\n"
                 "`/daily` - Show today's training grounds rotation"
+            ),
+            inline=False
+        )
+        
+        # Fun Commands (New!)
+        embed.add_field(
+            name="😄 Fun Commands",
+            value=(
+                "`/joke` - Get a random joke\n"
+                "`/coinflip [heads/tails]` - Flip a coin\n"
+                "`/roll [sides] [amount]` - Roll dice (default d6)\n"
+                "`/8ball <question>` - Magic 8-ball answers\n"
+                "`/choose <option1, option2>` - Let the bot decide for you\n"
+                "`/fact` - Random useless fact\n"
+                "`/owoify <text> [intensity]` - UwU-fy your text\n"
+                "`/reverse <text>` - Reverse text\n"
+                "`/mock <text>` - sPoNgEbOb MoCkInG tExT\n"
+                "`/time [timezone]` - Current time (UTC, JST, EST, etc.)"
             ),
             inline=False
         )
