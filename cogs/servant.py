@@ -256,13 +256,55 @@ class ServantCog(commands.Cog):
             # Show selection menu if multiple results
             await self.show_servant_selection(interaction, results, region_code)
     
-    async def show_servant_selection(self, interaction, results, region):
+        async def show_servant_selection(self, interaction, results, region):
         """Show dropdown for multiple servant matches"""
         embed = discord.Embed(
             title="Multiple Servants Found",
-            description=f"Found {len(results)} matches. React with the number to select:",
+            description=f"Select a servant from the dropdown:",
             color=0x3498db
         )
+        
+        for i, servant in enumerate(results[:5], 1):
+            rarity = "★" * servant.get('rarity', 0)
+            class_name = servant.get('className', 'Unknown')
+            embed.add_field(
+                name=f"{i}. {servant['name']}",
+                value=f"{class_name} {rarity}",
+                inline=False
+            )
+        
+        # Create select menu
+        options = []
+        for servant in results[:5]:
+            rarity = "★" * servant.get('rarity', 0)
+            options.append(discord.SelectOption(
+                label=f"{servant['name'][:25]}",
+                description=f"{servant.get('className', 'Unknown')} {rarity}",
+                value=str(servant['id'])
+            ))
+        
+        select = discord.ui.Select(
+            placeholder="Choose a servant...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+        
+        async def select_callback(interaction: discord.Interaction):
+            # This is a NEW interaction from the dropdown, so we defer it
+            await interaction.response.defer()
+            try:
+                servant_id = int(select.values[0])
+                await self.display_servant(interaction, servant_id, region)
+            except Exception as e:
+                await interaction.followup.send(f"Error loading servant: {e}", ephemeral=True)
+        
+        select.callback = select_callback
+        
+        view = discord.ui.View(timeout=120)  # Increased timeout
+        view.add_item(select)
+        
+        await interaction.followup.send(embed=embed, view=view)
         
         options = []
         for i, servant in enumerate(results[:10], 1):  # Limit to 10
