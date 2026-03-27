@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ui import Button, View
 import aiohttp
+import re
 from utils.atlas_api import AtlasAPI
 
 class ServantView(View):
@@ -71,9 +72,8 @@ class ServantView(View):
             # Get actual skill description
             detail = skill.get('detail', 'No description available')
             # Clean up description - replace [g][o] style tags if present
-            import re
-            detail = re.sub(r'\[.*?\]', '', detail)  # Remove square bracket tags
-            detail = detail.replace('&lt;', '<').replace('&gt;', '>')  # Fix HTML entities
+            detail = re.sub(r'\[.*?\]', '', detail)
+            detail = detail.replace('&lt;', '<').replace('&gt;', '>')
             detail = detail[:200] + "..." if len(detail) > 200 else detail
             
             skills_embed.add_field(
@@ -168,14 +168,16 @@ class ServantView(View):
                     inline=False
                 )
         
-        # Artwork preview
-        if self.assets.get('charaGraph', {}):
-            cards = self.assets['charaGraph']
-            if isinstance(cards, dict) and len(cards) > 0:
-                # Get first available ascension
-                first_key = sorted(cards.keys())[0]
-                first_art = cards[first_key]
-                passive_embed.set_image(url=first_art)
+        # Artwork preview - handle nested structure
+        chara_graph = self.assets.get('charaGraph', {})
+        if chara_graph:
+            # Get ascension images
+            asc_images = chara_graph.get('ascension', {})
+            if asc_images and len(asc_images) > 0:
+                first_key = sorted(asc_images.keys())[0]
+                first_art = asc_images[first_key]
+                if self.is_valid_url(first_art):
+                    passive_embed.set_image(url=first_art)
         
         passive_embed.set_footer(text=f"Page 4/4 • Region: {self.region} • Use buttons to navigate")
         pages.append(passive_embed)
@@ -192,6 +194,10 @@ class ServantView(View):
             0: 0x2f4f4f
         }
         return rarity_colors.get(self.servant.get('rarity', 3), 0x3498db)
+    
+    def is_valid_url(self, url):
+        """Check if URL is valid and not empty"""
+        return url and isinstance(url, str) and url.startswith('http')
     
     @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.grey)
     async def previous_button(self, interaction: discord.Interaction, button: Button):
@@ -254,12 +260,12 @@ class ServantCog(commands.Cog):
             if len(results) == 1:
                 await self.display_servant(interaction, results[0]['id'], region_code)
             else:
-                await self.show_servant_selection(interaction, results, region_code)
+                await self.show_selection(interaction, results, region_code, "servant")
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {str(e)}")
     
-    async def show_servant_selection(self, interaction, results, region):
-        """Show dropdown for multiple servant matches"""
+    async def show_selection(self, interaction, results, region, command_type):
+        """Generic selection dropdown for both servant and artwork commands"""
         embed = discord.Embed(
             title="Multiple Servants Found",
             description=f"Select a servant from the dropdown:",
@@ -295,9 +301,12 @@ class ServantCog(commands.Cog):
             await interaction.response.defer()
             try:
                 servant_id = int(select.values[0])
-                await self.display_servant(interaction, servant_id, region)
+                if command_type == "servant":
+                    await self.display_servant(interaction, servant_id, region)
+                elif command_type == "artwork":
+                    await self.display_artwork(interaction, servant_id, region)
             except Exception as e:
-                await interaction.followup.send(f"Error loading servant: {e}", ephemeral=True)
+                await interaction.followup.send(f"Error: {e}", ephemeral=True)
         
         select.callback = select_callback
         
@@ -344,7 +353,6 @@ class ServantCog(commands.Cog):
         ascension: int = 4,
         region: app_commands.Choice[str] = "NA"
     ):
-        # Defer immediately to prevent timeout
         await interaction.response.defer()
         
         region_code = region.value if isinstance(region, app_commands.Choice) else region
@@ -356,17 +364,44 @@ class ServantCog(commands.Cog):
                 await interaction.followup.send(f"❌ No servant found matching '{servant_name}'")
                 return
             
-            # Use exact match if available, otherwise first result
-            servant = None
-            for r in results:
-                if servant_name.lower() in r['name'].lower():
-                    servant = r
-                    break
-            if not servant:
-                servant = results[0]
+            if len(results) == 1:
+                await self.display_artwork_by_id(interaction, results[0]['id'], region_code, ascension, results[0]['name'])
+            else:
+                # Show selection with artwork command type
+                await self.show_selection(interaction, results, region_code, "artwork")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
+    
+    async def display_artwork(self, interaction: discord.Interaction, servant_id: int, region: str):
+        """Display artwork with default ascension 4 (called from dropdown)"""
+        # Get servant name first
+        try:
+            servant_data = await self.api.get_servant_details(servant_id, region)
+            name = servant_data.get('name', 'Unknown') if servant_data else 'Unknown'
+        except:
+            name = 'Unknown'
+        
+        await self.display_artwork_by_id(interaction, servant_id, region, 4, name)
+    
+    async def display_artwork_by_id(self, interaction: discord.Interaction, servant_id: int, region: str, ascension: int, servant_name: str = None):
+        """Display artwork for specific servant ID"""
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+        
+        try:
+            # Get servant details for name if not provided
+            if not servant_name:
+                servant_data = await self.api.get_servant_details(servant_id, region)
+                servant_name = servant_data.get('name', 'Unknown') if servant_data else 'Unknown'
             
-            servant_id = servant['id']
-            assets = await self.api.get_servant_assets(servant_id, region_code)
+            # Get assets
+            assets = await self.api.get_servant_assets(servant_id, region)
+            
+            if not assets:
+                await interaction.followup.send("❌ No assets found for this servant.")
+                return
+            
+            # Handle nested structure - charaGraph contains ascension and costume
             chara_graph = assets.get('charaGraph', {})
             
             if not chara_graph:
@@ -374,26 +409,65 @@ class ServantCog(commands.Cog):
                 return
             
             embed = discord.Embed(
-                title=f"{servant['name']} - Artwork",
+                title=f"{servant_name} - Artwork",
                 color=0xffd700
             )
             
+            # Get ascension images (main artwork)
+            asc_images = chara_graph.get('ascension', {})
+            # Get costume images (if any)
+            costume_images = chara_graph.get('costume', {})
+            
             if ascension == 0:
-                # Show all ascensions
-                for key, url in sorted(chara_graph.items())[:4]:
-                    embed.add_field(name=f"Ascension {key}", value=f"[View Image]({url})", inline=True)
+                # Show all ascensions as links
+                if asc_images:
+                    desc_lines = []
+                    for key in sorted(asc_images.keys()):
+                        url = asc_images[key]
+                        if url and url.startswith('http'):
+                            desc_lines.append(f"**Ascension {key}:** [View]({url})")
+                    
+                    if desc_lines:
+                        embed.description = "\n".join(desc_lines[:4])  # Max 4 to avoid too long msg
+                    else:
+                        embed.description = "No valid artwork URLs found."
+                
+                # Add costumes if available
+                if costume_images:
+                    costume_lines = []
+                    for key, url in list(costume_images.items())[:3]:
+                        if url and url.startswith('http'):
+                            costume_lines.append(f"**Costume {key}:** [View]({url})")
+                    if costume_lines:
+                        embed.add_field(name="Costumes", value="\n".join(costume_lines), inline=False)
+                
                 await interaction.followup.send(embed=embed)
             else:
-                # Show specific ascension
+                # Show specific ascension as large image
                 key = str(ascension)
-                if key in chara_graph:
-                    embed.set_image(url=chara_graph[key])
-                    embed.description = f"Ascension Level {ascension}"
-                else:
-                    # Fallback to highest available
-                    highest = max(chara_graph.keys(), key=lambda x: int(x) if str(x).isdigit() else 0)
-                    embed.set_image(url=chara_graph[highest])
+                url = None
+                
+                # Check if requested ascension exists
+                if key in asc_images:
+                    url = asc_images[key]
+                elif asc_images:
+                    # Fallback to highest available ascension
+                    highest = max(asc_images.keys(), key=lambda x: int(x) if str(x).isdigit() else 0)
+                    url = asc_images[highest]
                     embed.description = f"Ascension Level {highest} (requested {ascension} not available)"
+                else:
+                    await interaction.followup.send("❌ No ascension artwork available.")
+                    return
+                
+                # Validate URL
+                if not url or not url.startswith('http'):
+                    await interaction.followup.send("❌ Invalid artwork URL.")
+                    return
+                
+                embed.set_image(url=url)
+                if not embed.description:
+                    embed.description = f"Ascension Level {key if key in asc_images else highest}"
+                
                 await interaction.followup.send(embed=embed)
                 
         except Exception as e:
