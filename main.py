@@ -26,6 +26,7 @@ class FGOBot(commands.Bot):
         # Load ONLY these cogs (removed scraper)
         await self.load_extension('cogs.servant')
         await self.load_extension('cogs.utility')
+        await self.load_extension('cogs.fun')
         
         # Sync slash commands
         try:
