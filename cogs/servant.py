@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import Button, View
+from discord.ui import Button, View, Select
 import aiohttp
 import re
 import random
@@ -117,7 +117,7 @@ class ServantView(View):
         np_embed.set_footer(text=f"Page 3/4 • Region: {self.region}")
         pages.append(np_embed)
         
-        # Page 4: Passives & Artwork
+        # Page 4: Passives & Materials
         passive_embed = discord.Embed(
             title=f"{self.servant['name']} - Passives & Materials",
             color=self.get_rarity_color()
@@ -183,10 +183,256 @@ class ServantView(View):
         else:
             await interaction.response.defer()
 
+class BattleView(View):
+    def __init__(self, battle_data, player1, player2=None, is_pvp=False):
+        super().__init__(timeout=300)
+        self.battle = battle_data
+        self.player1 = player1
+        self.player2 = player2  # If None, bot controls player2
+        self.is_pvp = is_pvp
+        self.turn = 0
+        self.current_player = 0  # 0 = player1, 1 = player2
+        self.message = None
+        
+    def get_battle_embed(self):
+        p1 = self.battle['p1']
+        p2 = self.battle['p2']
+        
+        # Determine colors
+        p1_color = 0x3498db
+        p2_color = 0xe74c3c
+        
+        embed = discord.Embed(
+            title="⚔️ Master Battle",
+            color=0x9b59b6,
+            timestamp=datetime.datetime.now()
+        )
+        
+        # HP Bars
+        p1_hp_pct = max(0, (p1['hp'] / p1['max_hp']) * 100)
+        p2_hp_pct = max(0, (p2['hp'] / p2['max_hp']) * 100)
+        
+        p1_bar = "█" * int(p1_hp_pct / 10) + "░" * (10 - int(p1_hp_pct / 10))
+        p2_bar = "█" * int(p2_hp_pct / 10) + "░" * (10 - int(p2_hp_pct / 10))
+        
+        p1_name = p1['servant']['name']
+        p2_name = p2['servant']['name']
+        
+        field1 = f"{p1_bar}\n**{p1['hp']}/{p1['max_hp']} HP**"
+        field2 = f"{p2_bar}\n**{p2['hp']}/{p2['max_hp']} HP**"
+        
+        embed.add_field(name=f"🧑‍🎤 {self.player1.display_name}\n{p1_name}", value=field1, inline=True)
+        embed.add_field(name="VS", value="⚔️", inline=True)
+        
+        p2_display = self.player2.display_name if self.is_pvp else "🤖 Bot"
+        embed.add_field(name=f"🧑‍🎤 {p2_display}\n{p2_name}", value=field2, inline=True)
+        
+        # Battle Log (last 3 actions)
+        if self.battle.get('log'):
+            recent_logs = self.battle['log'][-3:]
+            embed.add_field(name="📜 Battle Log", value="\n".join(recent_logs), inline=False)
+        
+        # Turn indicator
+        current = self.player1.display_name if self.current_player == 0 else (self.player2.display_name if self.is_pvp else "Bot")
+        embed.set_footer(text=f"Turn {self.turn + 1} | Current: {current}")
+        
+        return embed
+    
+    def check_winner(self):
+        p1 = self.battle['p1']
+        p2 = self.battle['p2']
+        
+        if p1['hp'] <= 0:
+            return 2  # Player 2 wins
+        if p2['hp'] <= 0:
+            return 1  # Player 1 wins
+        return 0  # No winner yet
+    
+    async def end_battle(self, interaction, winner):
+        p1 = self.battle['p1']
+        p2 = self.battle['p2']
+        
+        # Disable all buttons
+        for child in self.children:
+            child.disabled = True
+        
+        embed = self.get_battle_embed()
+        
+        if winner == 1:
+            embed.title = "🏆 Victory!"
+            embed.color = 0x2ecc71
+            embed.add_field(
+                name="Result",
+                value=f"**{p1['servant']['name']}**: WE WON Master! I promise I will not let anymore danger come your way.",
+                inline=False
+            )
+        else:
+            embed.title = "💀 Defeat..."
+            embed.color = 0xe74c3c
+            loser = p1 if winner == 2 else p2
+            embed.add_field(
+                name="Result",
+                value=f"**{loser['servant']['name']}**: Ahh master it seems we lost this one...",
+                inline=False
+            )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+    
+    async def process_action(self, interaction, action):
+        p1 = self.battle['p1']
+        p2 = self.battle['p2']
+        
+        attacker = p1 if self.current_player == 0 else p2
+        defender = p2 if self.current_player == 0 else p1
+        
+        # Get NP name if available
+        np_name = attacker['servant'].get('noblePhantasms', [{}])[0].get('name', 'Special Attack')
+        
+        if action == "attack":
+            damage = random.randint(10, 20)
+            defender['hp'] -= damage
+            self.battle['log'].append(f"⚔️ {attacker['servant']['name']} dealt {damage} damage!")
+            
+        elif action == "defend":
+            attacker['defending'] = True
+            self.battle['log'].append(f"🛡️ {attacker['servant']['name']} is defending!")
+            
+        elif action == "special":
+            # 70% hit chance, 30-50 damage
+            if random.random() < 0.7:
+                damage = random.randint(30, 50)
+                if defender.get('defending'):
+                    damage = damage // 2
+                    defender['defending'] = False
+                defender['hp'] -= damage
+                self.battle['log'].append(f"✨ {attacker['servant']['name']} used **[{np_name}]** to deal {damage} damage!")
+            else:
+                self.battle['log'].append(f"❌ {attacker['servant']['name']} failed to use skill due to lack of magical energy!")
+        
+        # Check winner
+        winner = self.check_winner()
+        if winner != 0:
+            await self.end_battle(interaction, winner)
+            return
+        
+        # Switch turns
+        self.current_player = 1 - self.current_player
+        self.turn += 1
+        
+        # If bot's turn
+        if not self.is_pvp and self.current_player == 1:
+            await self.bot_turn(interaction)
+        else:
+            await interaction.response.edit_message(embed=self.get_battle_embed(), view=self)
+    
+    async def bot_turn(self, interaction):
+        await asyncio.sleep(1.5)
+        
+        # Bot AI: 50% attack, 25% defend, 25% special
+        roll = random.random()
+        if roll < 0.5:
+            action = "attack"
+        elif roll < 0.75:
+            action = "defend"
+        else:
+            action = "special"
+        
+        # Process bot action (current_player is 1/bot)
+        await self.process_bot_action(interaction, action)
+    
+    async def process_bot_action(self, interaction, action):
+        p1 = self.battle['p1']
+        p2 = self.battle['p2']
+        
+        attacker = p2  # Bot
+        defender = p1
+        
+        np_name = attacker['servant'].get('noblePhantasms', [{}])[0].get('name', 'Special Attack')
+        
+        if action == "attack":
+            damage = random.randint(10, 20)
+            if defender.get('defending'):
+                damage = damage // 2
+                defender['defending'] = False
+            defender['hp'] -= damage
+            self.battle['log'].append(f"⚔️ {attacker['servant']['name']} dealt {damage} damage!")
+            
+        elif action == "defend":
+            attacker['defending'] = True
+            self.battle['log'].append(f"🛡️ {attacker['servant']['name']} is defending!")
+            
+        elif action == "special":
+            if random.random() < 0.7:
+                damage = random.randint(30, 50)
+                if defender.get('defending'):
+                    damage = damage // 2
+                    defender['defending'] = False
+                defender['hp'] -= damage
+                self.battle['log'].append(f"✨ {attacker['servant']['name']} used **[{np_name}]** to deal {damage} damage!")
+            else:
+                self.battle['log'].append(f"❌ {attacker['servant']['name']} failed to use skill due to lack of magical energy!")
+        
+        # Check winner
+        winner = self.check_winner()
+        if winner != 0:
+            await self.end_battle(interaction, winner)
+            return
+        
+        # Switch back to player
+        self.current_player = 0
+        self.turn += 1
+        
+        await interaction.followup.edit_message(interaction.message.id, embed=self.get_battle_embed(), view=self)
+    
+    @discord.ui.button(label="⚔️ Attack", style=discord.ButtonStyle.red)
+    async def attack_btn(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.player1.id and (self.is_pvp and interaction.user.id != self.player2.id):
+            await interaction.response.send_message("Not your battle!", ephemeral=True)
+            return
+        
+        if self.is_pvp:
+            expected = self.player1.id if self.current_player == 0 else self.player2.id
+            if interaction.user.id != expected:
+                await interaction.response.send_message("Not your turn!", ephemeral=True)
+                return
+        
+        await self.process_action(interaction, "attack")
+    
+    @discord.ui.button(label="🛡️ Defend", style=discord.ButtonStyle.blurple)
+    async def defend_btn(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.player1.id and (self.is_pvp and interaction.user.id != self.player2.id):
+            await interaction.response.send_message("Not your battle!", ephemeral=True)
+            return
+        
+        if self.is_pvp:
+            expected = self.player1.id if self.current_player == 0 else self.player2.id
+            if interaction.user.id != expected:
+                await interaction.response.send_message("Not your turn!", ephemeral=True)
+                return
+        
+        await self.process_action(interaction, "defend")
+    
+    @discord.ui.button(label="✨ Special", style=discord.ButtonStyle.green)
+    async def special_btn(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.player1.id and (self.is_pvp and interaction.user.id != self.player2.id):
+            await interaction.response.send_message("Not your battle!", ephemeral=True)
+            return
+        
+        if self.is_pvp:
+            expected = self.player1.id if self.current_player == 0 else self.player2.id
+            if interaction.user.id != expected:
+                await interaction.response.send_message("Not your turn!", ephemeral=True)
+                return
+        
+        await self.process_action(interaction, "special")
+
 class ServantCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.api = None
+        self.active_hangman = {}
+        self.active_unscramble = {}
     
     async def cog_load(self):
         self.api = AtlasAPI(self.bot.session)
@@ -216,7 +462,7 @@ class ServantCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {str(e)}")
     
-    async def show_selection(self, interaction, results, region, command_type):
+    async def show_selection(self, interaction, results, region, command_type, player=None, is_pvp=False, opponent=None):
         """Generic selection dropdown"""
         embed = discord.Embed(
             title="Multiple Servants Found",
@@ -248,6 +494,8 @@ class ServantCog(commands.Cog):
                     await self.display_servant(interaction, servant_id, region)
                 elif command_type == "artwork":
                     await self.display_artwork(interaction, servant_id, region)
+                elif command_type == "masterbattle":
+                    await self.select_artwork_for_battle(interaction, servant_id, region, player, is_pvp, opponent)
             except Exception as e:
                 await interaction.followup.send(f"Error: {e}", ephemeral=True)
         
@@ -834,6 +1082,405 @@ class ServantCog(commands.Cog):
         embed.add_field(name="Tips", value="Run Ember Gathering daily quests!\n40 AP quest drops ~5-7 gold cards.", inline=False)
         
         await interaction.response.send_message(embed=embed)
+    
+    # NEW COMMANDS START HERE
+    
+    @app_commands.command(name="material", description="🧱 Show material farming locations")
+    @app_commands.describe(material_name="Material to search for")
+    async def material(self, interaction: discord.Interaction, material_name: str):
+        """Hardcoded material farming guide"""
+        materials_db = {
+            "gem": {"locations": "Training Grounds (daily)", "ap": "40 AP", "best": "Expert/Extreme"},
+            "magic gem": {"locations": "Training Grounds (daily)", "ap": "40 AP", "best": "Expert/Extreme"},
+            "secret gem": {"locations": "Training Grounds (daily)", "ap": "40 AP", "best": "Extreme"},
+            "void dust": {"locations": "Septem, Okeanos, America", "ap": "varies", "best": "Chaldea Gate - Daily"},
+            "bone": {"locations": "Fuyuki", "ap": "5 AP", "best": "Unknown Coordinates X-F"},
+            "fangs": {"locations": "Okeanos, Babylonia", "ap": "varies", "best": "Chaldea Gate - Cavalry"},
+            "fluid": {"locations": "Shinjuku, Salem", "ap": "varies", "best": "Shinjuku - Tower"},
+            "lamp": {"locations": "Babylonia", "ap": "varies", "best": "Babylonia - Observatory"},
+            "scarab": {"locations": "Camelot", "ap": "varies", "best": "Camelot - Holy City"}
+        }
+        
+        key = material_name.lower()
+        found = None
+        for k, v in materials_db.items():
+            if k in key or key in k:
+                found = v
+                break
+        
+        if found:
+            embed = discord.Embed(
+                title=f"🧱 Farming Guide: {material_name.title()}",
+                color=0xd35400
+            )
+            embed.add_field(name="Best Locations", value=found["locations"], inline=False)
+            embed.add_field(name="Recommended AP", value=found["ap"], inline=True)
+            embed.add_field(name="Best Node", value=found["best"], inline=True)
+        else:
+            embed = discord.Embed(
+                title="🧱 Material Farming",
+                description=f"No specific data for '{material_name}'. Try: Void Dust, Bone, Fangs, Gems, etc.",
+                color=0xd35400
+            )
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="apcalc", description="⏱️ Calculate AP refill time")
+    @app_commands.describe(current_ap="Current AP", target_ap="Target AP", max_ap="Your max AP")
+    async def apcalc(self, interaction: discord.Interaction, current_ap: int, target_ap: int, max_ap: int = 140):
+        """Calculate AP regeneration time"""
+        if current_ap >= target_ap:
+            await interaction.response.send_message("❌ Current AP is already at or above target!", ephemeral=True)
+            return
+        
+        ap_needed = target_ap - current_ap
+        minutes_needed = ap_needed * 5  # 1 AP per 5 minutes
+        hours = minutes_needed // 60
+        minutes = minutes_needed % 60
+        
+        ready_time = datetime.datetime.now() + datetime.timedelta(minutes=minutes_needed)
+        
+        embed = discord.Embed(
+            title="⏱️ AP Calculator",
+            color=0xe67e22
+        )
+        embed.add_field(name="AP Needed", value=str(ap_needed), inline=True)
+        embed.add_field(name="Time Required", value=f"{hours}h {minutes}m", inline=True)
+        embed.add_field(name="Full at", value=ready_time.strftime("%H:%M"), inline=True)
+        
+        if ap_needed > max_ap:
+            apple_time = (ap_needed // max_ap) + (1 if ap_needed % max_ap > 0 else 0)
+            embed.add_field(name="💡 Tip", value=f"You'll cap {apple_time} time(s). Use apples!", inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="mysticcode", description="🔮 Look up Mystic Code information")
+    @app_commands.describe(name="Mystic Code name (e.g., Chaldea, Atlas)")
+    async def mysticcode(self, interaction: discord.Interaction, name: str):
+        """Search for Mystic Codes"""
+        await interaction.response.defer()
+        
+        try:
+            url = f"https://api.atlasacademy.io/nice/NA/mc?lang=en"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        mcs = await resp.json()
+                        matches = [mc for mc in mcs if name.lower() in mc.get('name', '').lower()]
+                        
+                        if not matches:
+                            await interaction.followup.send(f"❌ No Mystic Code found matching '{name}'")
+                            return
+                        
+                        mc = matches[0]
+                        embed = discord.Embed(
+                            title=f"🔮 {mc['name']}",
+                            description=f"ID: {mc['id']}",
+                            color=0x9b59b6
+                        )
+                        
+                        for skill in mc.get('skills', [])[:3]:
+                            embed.add_field(
+                                name=skill.get('name', 'Skill'),
+                                value=skill.get('detail', 'No description')[:200] + "...",
+                                inline=False
+                            )
+                        
+                        await interaction.followup.send(embed=embed)
+                    else:
+                        await interaction.followup.send("❌ API Error")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
+    
+    @app_commands.command(name="grailcalc", description="🏆 Calculate Grails needed for levels")
+    @app_commands.describe(current_level="Current level", target_level="Target level", rarity="Base rarity (1-5)")
+    async def grailcalc(self, interaction: discord.Interaction, current_level: int, target_level: int, rarity: int = 5):
+        """Calculate Grail requirements"""
+        # Simplified grail costs
+        grail_limits = {1: 70, 2: 80, 3: 90, 4: 100, 5: 120}
+        max_level = grail_limits.get(rarity, 100)
+        
+        if target_level > max_level:
+            await interaction.response.send_message(f"❌ {rarity}★ servants can only reach level {max_level}!", ephemeral=True)
+            return
+        
+        # Approximate grail costs per 10 levels beyond cap
+        grails_needed = 0
+        if target_level > 100:
+            grails_needed = ((target_level - 100) // 2) + 1
+        elif target_level > 90 and rarity < 5:
+            grails_needed = ((target_level - 90) // 2) + 1
+        elif target_level > 80 and rarity < 4:
+            grails_needed = ((target_level - 80) // 2) + 1
+        
+        qp_cost = (target_level - current_level) * 1000000
+        
+        embed = discord.Embed(
+            title="🏆 Grail Calculator",
+            description=f"Level {current_level} → {target_level} ({rarity}★)",
+            color=0xf1c40f
+        )
+        embed.add_field(name="Grails Needed", value=str(grails_needed), inline=True)
+        embed.add_field(name="Approx QP Cost", value=f"{qp_cost:,}", inline=True)
+        embed.add_field(name="Max Level", value=str(max_level), inline=True)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="hangman", description="🎮 Play Hangman with FGO servant names")
+    async def hangman(self, interaction: discord.Interaction):
+        """FGO themed hangman game"""
+        await interaction.response.defer()
+        
+        try:
+            # Get random servant
+            search_terms = ["Artoria", "Gilgamesh", "Ishtar", "Kama", "Mash", "Okita"]
+            term = random.choice(search_terms)
+            results = await self.api.search_servant(term, "NA")
+            
+            if not results:
+                await interaction.followup.send("❌ Could not start game. Try again!")
+                return
+            
+            servant = random.choice(results)
+            name = servant['name'].upper()
+            # Remove spaces for game
+            display_name = name
+            hidden = ['_' if c.isalpha() else c for c in name]
+            
+            game_data = {
+                'word': name,
+                'display': hidden,
+                'guesses': [],
+                'lives': 6,
+                'servant': servant
+            }
+            
+            self.active_hangman[interaction.user.id] = game_data
+            
+            embed = discord.Embed(
+                title="🎮 FGO Hangman",
+                description=f"Guess the servant name!\n\n**{' '.join(hidden)}**",
+                color=0x3498db
+            )
+            embed.add_field(name="Lives", value="❤️" * game_data['lives'], inline=True)
+            embed.add_field(name="Guesses", value="None", inline=True)
+            embed.set_footer(text="Reply with a letter to guess!")
+            
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error starting game: {str(e)}")
+    
+    @app_commands.command(name="unscramble", description="🧩 Unscramble the FGO servant name")
+    async def unscramble(self, interaction: discord.Interaction):
+        """FGO word scramble"""
+        await interaction.response.defer()
+        
+        try:
+            terms = ["Artoria", "Gilgamesh", "Ishtar", "Kama", "Mash", "Okita", "Mordred", "Arthur"]
+            term = random.choice(terms)
+            results = await self.api.search_servant(term, "NA")
+            
+            if not results:
+                await interaction.followup.send("❌ Game error. Try again!")
+                return
+            
+            servant = random.choice(results)
+            name = servant['name']
+            # Scramble letters (preserve spaces)
+            words = name.split()
+            scrambled_words = []
+            for word in words:
+                if len(word) > 3:
+                    middle = list(word[1:-1])
+                    random.shuffle(middle)
+                    scrambled = word[0] + ''.join(middle) + word[-1]
+                else:
+                    scrambled = word
+                scrambled_words.append(scrambled)
+            
+            scrambled = ' '.join(scrambled_words)
+            
+            self.active_unscramble[interaction.user.id] = {
+                'answer': name.lower(),
+                'servant': servant,
+                'time': datetime.datetime.now()
+            }
+            
+            embed = discord.Embed(
+                title="🧩 FGO Unscramble",
+                description=f"**{scrambled}**\n\nType your answer in chat!",
+                color=0xe74c3c
+            )
+            embed.set_footer(text="You have 30 seconds!")
+            
+            await interaction.followup.send(embed=embed)
+            
+            # Wait for answer
+            def check(m):
+                return m.author.id == interaction.user.id and m.channel.id == interaction.channel_id
+            
+            try:
+                msg = await self.bot.wait_for('message', timeout=30.0, check=check)
+                if msg.content.lower() == name.lower():
+                    await msg.reply(f"🎉 Correct! It was **{name}**!")
+                else:
+                    await msg.reply(f"❌ Wrong! It was **{name}**!")
+            except asyncio.TimeoutError:
+                await interaction.followup.send(f"⏰ Time's up! It was **{name}**!")
+                
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
+    
+    @app_commands.command(name="masterbattle", description="⚔️ Battle against the bot or another player!")
+    @app_commands.describe(opponent="User to battle (leave empty to fight bot)")
+    async def masterbattle(self, interaction: discord.Interaction, opponent: discord.Member = None):
+        """Start a master battle"""
+        await interaction.response.defer()
+        
+        is_pvp = opponent is not None and opponent.id != interaction.user.id and not opponent.bot
+        
+        if is_pvp:
+            await interaction.followup.send(f"⚔️ {opponent.mention}, {interaction.user.mention} challenges you to a Master Battle!\nReact with ✅ to accept!")
+            # In a real implementation, add confirmation logic here
+            # For now, proceed with bot setup for both
+            await asyncio.sleep(2)
+        
+        # Search for servants for player 1
+        await interaction.followup.send(f"{interaction.user.mention}, searching for your servant... Type a servant name:")
+        
+        def check(m):
+            return m.author.id == interaction.user.id and m.channel.id == interaction.channel_id
+        
+        try:
+            msg = await self.bot.wait_for('message', timeout=60.0, check=check)
+            search_name = msg.content
+            
+            results = await self.api.search_servant(search_name, "NA")
+            
+            if not results:
+                await interaction.followup.send("❌ No servants found!")
+                return
+            
+            # Show selection for P1
+            await self.show_selection_for_battle(interaction, results, "NA", interaction.user, is_pvp, opponent)
+            
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Battle cancelled - timeout!")
+    
+    async def show_selection_for_battle(self, interaction, results, region, player, is_pvp, opponent):
+        """Show servant selection for battle"""
+        embed = discord.Embed(title="Choose your Servant", color=0x3498db)
+        
+        for i, servant in enumerate(results[:5], 1):
+            rarity = "★" * servant.get('rarity', 0)
+            embed.add_field(name=f"{i}. {servant['name']}", value=f"{servant.get('className')} {rarity}", inline=False)
+        
+        options = []
+        for servant in results[:5]:
+            options.append(discord.SelectOption(
+                label=servant['name'][:25],
+                value=str(servant['id'])
+            ))
+        
+        select = Select(options=options, placeholder="Select your servant...")
+        
+        async def callback(interaction2):
+            servant_id = int(select.values[0])
+            await self.select_artwork_for_battle(interaction2, servant_id, region, player, is_pvp, opponent)
+        
+        select.callback = callback
+        view = View(timeout=120)
+        view.add_item(select)
+        
+        await interaction.followup.send(embed=embed, view=view)
+    
+    async def select_artwork_for_battle(self, interaction, servant_id, region, player, is_pvp, opponent):
+        """Let player choose ascension art"""
+        try:
+            servant_data = await self.api.get_servant_details(servant_id, region)
+            assets = await self.api.get_servant_assets(servant_id, region)
+            
+            chara_graph = assets.get('charaGraph', {})
+            asc_images = chara_graph.get('ascension', {})
+            
+            if not asc_images:
+                await interaction.followup.send("❌ No artwork found!")
+                return
+            
+            # Create selection for artwork
+            embed = discord.Embed(title=f"Select Ascension Art for {servant_data['name']}", color=0xffd700)
+            
+            options = []
+            for key in sorted(asc_images.keys())[:4]:
+                url = asc_images[key]
+                if url and url.startswith('http'):
+                    options.append(discord.SelectOption(
+                        label=f"Ascension {key}",
+                        value=key
+                    ))
+            
+            if not options:
+                options = [discord.SelectOption(label="Default", value="1")]
+            
+            select = Select(options=options, placeholder="Choose artwork...")
+            
+            async def artwork_callback(inter2):
+                asc_key = select.values[0]
+                art_url = asc_images.get(asc_key, asc_images.get('1'))
+                
+                # Store player 1 data
+                battle_data = {
+                    'p1': {
+                        'servant': servant_data,
+                        'hp': 100,
+                        'max_hp': 100,
+                        'art_url': art_url,
+                        'defending': False
+                    },
+                    'p2': None,
+                    'log': []
+                }
+                
+                if is_pvp and opponent:
+                    # In real implementation, wait for opponent to pick
+                    # For now, bot picks random
+                    pass
+                
+                # Get bot's random servant
+                search_terms = ["Artoria", "Gilgamesh", "Ishtar", "Kama", "Mash", "Okita"]
+                term = random.choice(search_terms)
+                bot_results = await self.api.search_servant(term, "NA")
+                
+                if bot_results:
+                    bot_servant = random.choice(bot_results[:5])
+                    bot_assets = await self.api.get_servant_assets(bot_servant['id'], region)
+                    bot_chara = bot_assets.get('charaGraph', {})
+                    bot_asc = bot_chara.get('ascension', {})
+                    bot_art = bot_asc.get('1') if bot_asc else None
+                    
+                    battle_data['p2'] = {
+                        'servant': bot_servant,
+                        'hp': 100,
+                        'max_hp': 100,
+                        'art_url': bot_art,
+                        'defending': False
+                    }
+                
+                # Start battle
+                view = BattleView(battle_data, player, opponent, is_pvp)
+                embed = view.get_battle_embed()
+                
+                await interaction.followup.send(embed=embed, view=view)
+            
+            select.callback = artwork_callback
+            view = View(timeout=120)
+            view.add_item(select)
+            
+            await interaction.followup.send(embed=embed, view=view)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
 
 async def setup(bot):
     await bot.add_cog(ServantCog(bot))
