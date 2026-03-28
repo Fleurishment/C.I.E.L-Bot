@@ -6,6 +6,51 @@ import random
 import datetime
 import asyncio
 
+class MemeView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    async def fetch_meme(self):
+        url = "https://meme-api.com/gimme"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers={"User-Agent": "DiscordBot"}) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.json()
+
+    async def update(self, interaction: discord.Interaction):
+        data = await self.fetch_meme()
+
+        if not data:
+            await interaction.followup.send("❌ Failed to fetch meme!", ephemeral=True)
+            return
+
+        if data.get("nsfw") and not interaction.channel.is_nsfw():
+            await interaction.followup.send("⚠️ NSFW meme blocked.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=data["title"],
+            url=data.get("postLink"),
+            color=0xff9900
+        )
+        embed.set_image(url=data["url"])
+        embed.set_footer(
+            text=f"👍 {data.get('ups', 0)} | 💬 {data.get('num_comments', 0)} | r/{data.get('subreddit', 'unknown')}"
+        )
+
+        await interaction.followup.edit_message(interaction.message.id, embed=embed, view=self)
+
+    @discord.ui.button(label="Next Meme ⏭️", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.update(interaction)
+
+    @discord.ui.button(label="Refresh 🔄", style=discord.ButtonStyle.secondary)
+    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.update(interaction)
+
 class FunCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -445,27 +490,33 @@ class FunCog(commands.Cog):
     
     @app_commands.command(name="meme", description="😂 Get a random meme")
     async def meme(self, interaction: discord.Interaction):
-        """Fetch a random meme from Reddit"""
         await interaction.response.defer()
-        
+
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get("https://meme-api.com/gimme") as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        
-                        embed = discord.Embed(
-                            title=data['title'],
-                            url=data['postLink'],
-                            color=0xffd700
-                        )
-                        embed.set_image(url=data['url'])
-                        embed.set_footer(text=f"👍 {data['ups']} | 💬 {data['commentCount']} | r/{data['subreddit']}")
-                        
-                        await interaction.followup.send(embed=embed)
-                    else:
+                async with session.get("https://meme-api.com/gimme", headers={"User-Agent": "DiscordBot"}) as resp:
+                    if resp.status != 200:
                         raise Exception("API failed")
-        except:
+
+                    data = await resp.json()
+
+                    if data.get("nsfw") and not interaction.channel.is_nsfw():
+                        await interaction.followup.send("⚠️ NSFW meme blocked in this channel.")
+                        return
+
+                    embed = discord.Embed(
+                        title=data["title"],
+                        url=data.get("postLink"),
+                        color=0xff9900
+                    )
+                    embed.set_image(url=data["url"])
+                    embed.set_footer(
+                        text=f"👍 {data.get('ups', 0)} | 💬 {data.get('num_comments', 0)} | r/{data.get('subreddit', 'unknown')}"
+                    )
+
+                    await interaction.followup.send(embed=embed, view=MemeView())
+
+        except Exception as e:
             await interaction.followup.send("❌ Couldn't fetch a meme right now!")
     
     @app_commands.command(name="weather", description="🌤️ Check the weather (fake)")
