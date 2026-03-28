@@ -51,6 +51,25 @@ class FGOBot(commands.Bot):
             await self.session.close()
         await super().close()
 
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    
+    # Check if user is AFK
+    utility_cog = bot.get_cog("UtilityCog")
+    if utility_cog and message.author.id in utility_cog.afk_users:
+        del utility_cog.afk_users[message.author.id]
+        await message.reply("Welcome back! I removed your AFK status.", delete_after=5)
+    
+    # Check if mentioning AFK user
+    for mention in message.mentions:
+        if utility_cog and mention.id in utility_cog.afk_users:
+            data = utility_cog.afk_users[mention.id]
+            await message.reply(f"💤 {mention.display_name} is AFK: {data['reason']}", delete_after=10)
+    
+    await bot.process_commands(message)
+
 async def main():
     async with FGOBot() as bot:
         await bot.start(os.getenv('DISCORD_TOKEN'))
