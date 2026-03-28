@@ -27,7 +27,8 @@ class FGOBot(commands.Bot):
         await self.load_extension('cogs.servant')
         await self.load_extension('cogs.utility')
         await self.load_extension('cogs.fun')
-        await self.load_extension('cogs.rayshift') 
+        await self.load_extension('cogs.rayshift')
+        await self.load_extension('cogs.servantbattle')
         
         # Sync slash commands
         try:
