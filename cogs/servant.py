@@ -1332,7 +1332,7 @@ class ServantCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {str(e)}")
     
-    @app_commands.command(name="masterbattle (Broken! use /servantbattle instead)", description="⚔️ Battle against the bot or another player!")
+    @app_commands.command(name="masterbattle", description="⚔️ Battle against the bot or another player!")
     @app_commands.describe(opponent="User to battle (leave empty to fight bot)")
     async def masterbattle(self, interaction: discord.Interaction, opponent: discord.Member = None):
         """Start a master battle"""
