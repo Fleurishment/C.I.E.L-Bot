@@ -400,13 +400,12 @@ class ServantCog(commands.Cog):
         region_code = region.value if isinstance(region, app_commands.Choice) else region
         
         try:
-            # Get random servant
-            # Use a list of popular servant IDs for better randomization
-            popular_ids = list(range(1, 350))  # Most servants are in this range
+            # Popular servant ID range for random selection
+            popular_ids = list(range(1, 400))
             random.shuffle(popular_ids)
             
-            # Try up to 10 random servants to find one with artwork
-            for servant_id in popular_ids[:10]:
+            # Try up to 15 random servants to find one with artwork
+            for servant_id in popular_ids[:15]:
                 try:
                     servant_data = await self.api.get_servant_details(servant_id, region_code)
                     if not servant_data:
