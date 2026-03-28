@@ -400,104 +400,120 @@ class ServantCog(commands.Cog):
         region_code = region.value if isinstance(region, app_commands.Choice) else region
         
         try:
-            # First, search for a common term to get a list of valid servant IDs
-            # Using "a" gets many servants
-            search_results = await self.api.search_servant("a", region_code)
+            # Use basic endpoint to get all servants
+            base_url = "https://api.atlasacademy.io"
+            url = f"{base_url}/basic/{region_code}/servant/search"
+            params = {"name": " ", "lang": "en"}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send(f"❌ API Error: {resp.status}")
+                        return
+                    
+                    search_results = await resp.json()
             
             if not search_results or len(search_results) == 0:
-                await interaction.followup.send("❌ Could not fetch servant list.")
+                await interaction.followup.send("❌ No servants found in database.")
                 return
             
-            # Shuffle and pick random servants from valid results
-            valid_servants = [s for s in search_results if s.get('id')]
+            # Filter valid servants (must have collectionNo > 0, meaning they're playable)
+            valid_servants = [s for s in search_results if s.get('id') and s.get('collectionNo', 0) > 0]
+            
+            if len(valid_servants) == 0:
+                await interaction.followup.send("❌ No valid playable servants found.")
+                return
+            
+            # Shuffle and try random servants
             random.shuffle(valid_servants)
             
-            # Try up to 10 random servants
-            for servant_info in valid_servants[:10]:
+            # Try up to 20 servants
+            for servant_info in valid_servants[:20]:
                 try:
                     servant_id = servant_info['id']
-                    servant_name = servant_info.get('name', 'Unknown')
                     
-                    # Get assets directly - skip getting full details to save time
-                    assets = await self.api.get_servant_assets(servant_id, region_code)
+                    # Get assets directly
+                    assets_url = f"{base_url}/nice/{region_code}/svt/{servant_id}"
                     
-                    if not assets:
-                        continue
-                    
-                    chara_graph = assets.get('charaGraph', {})
-                    if not chara_graph:
-                        continue
-                    
-                    # Collect all artwork
-                    all_artwork = []
-                    
-                    # Ascension artwork
-                    asc_images = chara_graph.get('ascension', {})
-                    for key, url in asc_images.items():
-                        if url and isinstance(url, str) and url.startswith('http'):
-                            all_artwork.append({
-                                'url': url,
-                                'type': 'Ascension',
-                                'number': key
-                            })
-                    
-                    # Costume artwork
-                    costume_images = chara_graph.get('costume', {})
-                    for key, url in costume_images.items():
-                        if url and isinstance(url, str) and url.startswith('http'):
-                            all_artwork.append({
-                                'url': url,
-                                'type': 'Costume',
-                                'number': key
-                            })
-                    
-                    if not all_artwork:
-                        continue
-                    
-                    # Success! Pick random artwork
-                    selected = random.choice(all_artwork)
-                    
-                    # Get full details only if we found artwork
-                    servant_data = await self.api.get_servant_details(servant_id, region_code)
-                    if servant_data:
-                        servant_name = servant_data.get('name', servant_name)
-                        servant_class = servant_data.get('className', 'Unknown')
-                        rarity = servant_data.get('rarity', 0)
-                    else:
-                        servant_class = servant_info.get('className', 'Unknown')
-                        rarity = servant_info.get('rarity', 0)
-                    
-                    # Create embed
-                    embed = discord.Embed(
-                        title=f"🎲 Random Artwork",
-                        description=f"**{servant_name}**",
-                        color=0xff69b4
-                    )
-                    embed.set_image(url=selected['url'])
-                    
-                    # Info fields
-                    embed.add_field(name="Class", value=servant_class, inline=True)
-                    embed.add_field(name="Rarity", value="★" * rarity, inline=True)
-                    embed.add_field(name="Region", value=region_code, inline=True)
-                    embed.add_field(
-                        name="Artwork", 
-                        value=f"{selected['type']} {selected['number']}", 
-                        inline=True
-                    )
-                    embed.add_field(name="Servant ID", value=servant_id, inline=True)
-                    
-                    # Add link to view all artwork
-                    embed.set_footer(text=f"Use /artwork {servant_name} to see all artwork")
-                    
-                    await interaction.followup.send(embed=embed)
-                    return  # Success!
-                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(assets_url) as resp:
+                            if resp.status != 200:
+                                continue
+                            
+                            data = await resp.json()
+                            assets = data.get('extraAssets', {})
+                            
+                            if not assets:
+                                continue
+                            
+                            chara_graph = assets.get('charaGraph', {})
+                            if not chara_graph:
+                                continue
+                            
+                            # Collect all artwork
+                            all_artwork = []
+                            
+                            # Ascension artwork (1-4)
+                            asc_images = chara_graph.get('ascension', {})
+                            for key, url in asc_images.items():
+                                if url and isinstance(url, str) and url.startswith('http'):
+                                    all_artwork.append({
+                                        'url': url,
+                                        'type': 'Ascension',
+                                        'number': key
+                                    })
+                            
+                            # Costume artwork
+                            costume_images = chara_graph.get('costume', {})
+                            for key, url in costume_images.items():
+                                if url and isinstance(url, str) and url.startswith('http'):
+                                    all_artwork.append({
+                                        'url': url,
+                                        'type': 'Costume',
+                                        'number': key
+                                    })
+                            
+                            if not all_artwork:
+                                continue
+                            
+                            # Success! Pick random artwork
+                            selected = random.choice(all_artwork)
+                            
+                            # Get servant info from the data we already have
+                            servant_name = servant_info.get('name', 'Unknown')
+                            servant_class = servant_info.get('className', 'Unknown')
+                            rarity = servant_info.get('rarity', 0)
+                            
+                            # Create embed
+                            embed = discord.Embed(
+                                title=f"🎲 Random Artwork",
+                                description=f"**{servant_name}**",
+                                color=0xff69b4
+                            )
+                            embed.set_image(url=selected['url'])
+                            
+                            # Info fields
+                            embed.add_field(name="Class", value=servant_class, inline=True)
+                            embed.add_field(name="Rarity", value="★" * rarity, inline=True)
+                            embed.add_field(name="Region", value=region_code, inline=True)
+                            embed.add_field(
+                                name="Artwork", 
+                                value=f"{selected['type']} {selected['number']}", 
+                                inline=True
+                            )
+                            embed.add_field(name="Servant ID", value=servant_id, inline=True)
+                            
+                            embed.set_footer(text=f"Use /artwork {servant_name} to see all artwork")
+                            
+                            await interaction.followup.send(embed=embed)
+                            return  # Success!
+                            
                 except Exception as e:
-                    print(f"Error with servant {servant_info.get('id')}: {e}")
+                    print(f"Error with servant {servant_info.get('id', 'unknown')}: {e}")
                     continue
             
-            # If we get here, no artwork was found after trying all
-            await interaction.followup.send("❌ Couldn't find any artwork after trying multiple servants. The API might be slow - try again!")
+            # If we get here, no artwork was found
+            await interaction.followup.send("❌ Couldn't find any artwork with valid images after trying 20 servants. The API might be having issues - try again later!")
             
         except Exception as e:
             print(f"Randomart error: {e}")
