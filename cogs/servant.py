@@ -400,43 +400,60 @@ class ServantCog(commands.Cog):
         region_code = region.value if isinstance(region, app_commands.Choice) else region
         
         try:
-            # Use basic endpoint to get all servants
+            # Try multiple search terms to get servants
+            search_terms = ["Artoria", "Ishtar", "Gilgamesh", "Mash", "Kama", "Morgan", "Oberon", "a"]
+            all_servants = []
+            
             base_url = "https://api.atlasacademy.io"
-            url = f"{base_url}/basic/{region_code}/servant/search"
-            params = {"name": " ", "lang": "en"}
             
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as resp:
-                    if resp.status != 200:
-                        await interaction.followup.send(f"❌ API Error: {resp.status}")
-                        return
+            # Try each search term until we get results
+            for term in search_terms:
+                try:
+                    url = f"{base_url}/basic/{region_code}/servant/search"
+                    params = {"name": term, "lang": "en"}
                     
-                    search_results = await resp.json()
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, params=params, timeout=10) as resp:
+                            if resp.status == 200:
+                                results = await resp.json()
+                                if results and len(results) > 0:
+                                    all_servants.extend(results)
+                except Exception as e:
+                    print(f"Search term '{term}' failed: {e}")
+                    continue
             
-            if not search_results or len(search_results) == 0:
-                await interaction.followup.send("❌ No servants found in database.")
+            # Remove duplicates by ID
+            seen_ids = set()
+            unique_servants = []
+            for s in all_servants:
+                if s.get('id') and s['id'] not in seen_ids:
+                    seen_ids.add(s['id'])
+                    unique_servants.append(s)
+            
+            if len(unique_servants) == 0:
+                await interaction.followup.send("❌ Could not fetch any servants from the API. Please try again later.")
                 return
             
-            # Filter valid servants (must have collectionNo > 0, meaning they're playable)
-            valid_servants = [s for s in search_results if s.get('id') and s.get('collectionNo', 0) > 0]
+            # Filter valid servants (collectionNo > 0 means playable)
+            valid_servants = [s for s in unique_servants if s.get('collectionNo', 0) > 0]
             
             if len(valid_servants) == 0:
-                await interaction.followup.send("❌ No valid playable servants found.")
-                return
+                # If no collectionNo filter works, just use all unique
+                valid_servants = unique_servants
             
-            # Shuffle and try random servants
+            # Shuffle for randomness
             random.shuffle(valid_servants)
             
-            # Try up to 20 servants
-            for servant_info in valid_servants[:20]:
+            # Try up to 25 servants
+            for servant_info in valid_servants[:25]:
                 try:
                     servant_id = servant_info['id']
                     
-                    # Get assets directly
+                    # Get assets
                     assets_url = f"{base_url}/nice/{region_code}/svt/{servant_id}"
                     
                     async with aiohttp.ClientSession() as session:
-                        async with session.get(assets_url) as resp:
+                        async with session.get(assets_url, timeout=10) as resp:
                             if resp.status != 200:
                                 continue
                             
@@ -453,7 +470,7 @@ class ServantCog(commands.Cog):
                             # Collect all artwork
                             all_artwork = []
                             
-                            # Ascension artwork (1-4)
+                            # Ascension artwork
                             asc_images = chara_graph.get('ascension', {})
                             for key, url in asc_images.items():
                                 if url and isinstance(url, str) and url.startswith('http'):
@@ -479,7 +496,7 @@ class ServantCog(commands.Cog):
                             # Success! Pick random artwork
                             selected = random.choice(all_artwork)
                             
-                            # Get servant info from the data we already have
+                            # Get servant info
                             servant_name = servant_info.get('name', 'Unknown')
                             servant_class = servant_info.get('className', 'Unknown')
                             rarity = servant_info.get('rarity', 0)
@@ -513,7 +530,7 @@ class ServantCog(commands.Cog):
                     continue
             
             # If we get here, no artwork was found
-            await interaction.followup.send("❌ Couldn't find any artwork with valid images after trying 20 servants. The API might be having issues - try again later!")
+            await interaction.followup.send(f"❌ Couldn't find any artwork after trying {len(valid_servants)} servants. The API might be having issues - try again later!")
             
         except Exception as e:
             print(f"Randomart error: {e}")
