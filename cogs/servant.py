@@ -495,13 +495,13 @@ class ServantCog(commands.Cog):
                 except Exception as e:
                     print(f"Error with servant {servant_info.get('id')}: {e}")
                     continue
-        
-        # If we get here, no artwork was found after trying all
-        await interaction.followup.send("❌ Couldn't find any artwork after trying multiple servants. The API might be slow - try again!")
-        
-    except Exception as e:
-        print(f"Randomart error: {e}")
-        await interaction.followup.send(f"❌ Error: {str(e)}")
+            
+            # If we get here, no artwork was found after trying all
+            await interaction.followup.send("❌ Couldn't find any artwork after trying multiple servants. The API might be slow - try again!")
+            
+        except Exception as e:
+            print(f"Randomart error: {e}")
+            await interaction.followup.send(f"❌ Error: {str(e)}")
     
     @app_commands.command(name="search", description="Search servants by name (API only)")
     @app_commands.describe(name="Servant name")
