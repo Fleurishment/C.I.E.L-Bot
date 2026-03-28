@@ -51,6 +51,47 @@ class MemeView(discord.ui.View):
         await interaction.response.defer()
         await self.update(interaction)
 
+class BombView(discord.ui.View):
+    def __init__(self, correct_wire, timeout=10):
+        super().__init__(timeout=timeout)
+        self.correct_wire = correct_wire
+        self.exploded = False
+        
+        colors = [("🔴 Red", "red"), ("🔵 Blue", "blue"), ("🟢 Green", "green")]
+        random.shuffle(colors)
+        
+        for label, value in colors:
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.grey, custom_id=value)
+            btn.callback = self.wire_callback
+            self.add_item(btn)
+    
+    async def wire_callback(self, interaction: discord.Interaction):
+        if self.exploded:
+            return
+        
+        wire = interaction.data['custom_id']
+        
+        for child in self.children:
+            child.disabled = True
+        
+        if wire == self.correct_wire:
+            embed = discord.Embed(
+                title="💣 Bomb Defused!",
+                description=f"✅ You cut the {wire} wire! Safe!",
+                color=0x2ecc71
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            embed = discord.Embed(
+                title="💥 BOOM!",
+                description=f"❌ Wrong wire! It was **{self.correct_wire}**!",
+                color=0xe74c3c
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+        
+        self.exploded = True
+        self.stop()
+
 class FunCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -618,6 +659,274 @@ class FunCog(commands.Cog):
         )
         
         await interaction.response.send_message(embed=embed)
+    
+    # NEW COMMANDS START HERE
+    
+    @app_commands.command(name="roast", description="🔥 Get roasted!")
+    @app_commands.describe(user="Who to roast (default: yourself)")
+    async def roast(self, interaction: discord.Interaction, user: discord.Member = None):
+        """Roast someone"""
+        target = user or interaction.user
+        
+        roasts = [
+            f"{target.display_name} is like a cloud. When they disappear, it's a beautiful day.",
+            f"I'm not saying {target.display_name} is dumb, but they think a quarterback is a refund.",
+            f"{target.display_name} is proof that evolution can go in reverse.",
+            f"Roses are red, violets are blue, {target.display_name} has the face only a mother could love.",
+            f"{target.display_name} is so slow, they got lapped by a statue.",
+            f"I'd agree with {target.display_name} but then we'd both be wrong.",
+            f"{target.display_name} brings everyone so much joy... when they leave the room.",
+            f"{target.display_name} is the reason the gene pool needs a lifeguard."
+        ]
+        
+        embed = discord.Embed(
+            title="🔥 Roast",
+            description=random.choice(roasts),
+            color=0xe74c3c
+        )
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="wouldyou", description="🤔 Would You Rather questions")
+    async def wouldyou(self, interaction: discord.Interaction):
+        """Random would you rather"""
+        questions = [
+            "Would you rather have unlimited IQ but no friends, or average IQ with many friends?",
+            "Would you rather always speak your mind or never speak again?",
+            "Would you rather be a master at FGO but broke, or rich but never win a gacha roll?",
+            "Would you rather fight 100 duck-sized horses or 1 horse-sized duck?",
+            "Would you rather have spaghetti for hair or sweat maple syrup?",
+            "Would you rather be able to fly but only 1 inch off the ground, or run at 100mph but only backwards?"
+        ]
+        
+        embed = discord.Embed(
+            title="🤔 Would You Rather",
+            description=random.choice(questions),
+            color=0x9b59b6
+        )
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="color", description="🎨 Get a random color or color info")
+    @app_commands.describe(hex_code="Hex color code (optional)")
+    async def color(self, interaction: discord.Interaction, hex_code: str = None):
+        """Show color info"""
+        if hex_code:
+            hex_clean = hex_code.lstrip('#')
+            if len(hex_clean) != 6 or not all(c in '0123456789ABCDEFabcdef' for c in hex_clean):
+                await interaction.response.send_message("❌ Invalid hex code!", ephemeral=True)
+                return
+            color_val = int(hex_clean, 16)
+        else:
+            color_val = random.randint(0, 0xFFFFFF)
+            hex_clean = f"{color_val:06x}"
+        
+        embed = discord.Embed(
+            title=f"🎨 Color #{hex_clean.upper()}",
+            color=color_val
+        )
+        embed.add_field(name="Hex", value=f"#{hex_clean.upper()}", inline=True)
+        embed.add_field(name="Decimal", value=str(color_val), inline=True)
+        embed.add_field(name="RGB", value=f"{(color_val >> 16) & 255}, {(color_val >> 8) & 255}, {color_val & 255}", inline=True)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="bomb", description="💣 Defuse the bomb!")
+    async def bomb(self, interaction: discord.Interaction):
+        """Wire cutting game"""
+        correct = random.choice(["red", "blue", "green"])
+        
+        embed = discord.Embed(
+            title="💣 Bomb Defusal",
+            description="**10 SECONDS!** Cut the correct wire!\n🔴 Red | 🔵 Blue | 🟢 Green",
+            color=0xe74c3c
+        )
+        
+        view = BombView(correct, timeout=10)
+        await interaction.response.send_message(embed=embed, view=view)
+        
+        # Wait for timeout
+        await view.wait()
+        if not view.exploded:
+            for child in view.children:
+                child.disabled = True
+            await interaction.edit_original_response(view=view)
+    
+    @app_commands.command(name="aim", description="🎯 Test your reaction speed")
+    async def aim(self, interaction: discord.Interaction):
+        """Reaction time game"""
+        await interaction.response.send_message("🎯 Get ready...")
+        
+        wait_time = random.uniform(2, 5)
+        await asyncio.sleep(wait_time)
+        
+        start_time = datetime.datetime.now()
+        
+        embed = discord.Embed(
+            title="🎯 CLICK NOW!",
+            description="Press the button as fast as you can!",
+            color=0x2ecc71
+        )
+        
+        view = discord.ui.View(timeout=10)
+        btn = discord.ui.Button(label="SHOOT!", style=discord.ButtonStyle.red)
+        
+        clicked = [False]
+        
+        async def callback(inter):
+            if clicked[0]:
+                return
+            clicked[0] = True
+            reaction_time = (datetime.datetime.now() - start_time).total_seconds() * 1000
+            
+            rating = "⚡ GODLIKE!" if reaction_time < 200 else "💨 Fast!" if reaction_time < 400 else "🐢 Slow..."
+            
+            result_embed = discord.Embed(
+                title="🎯 Result",
+                description=f"Time: **{reaction_time:.0f}ms**\n{rating}",
+                color=0x2ecc71 if reaction_time < 400 else 0xe74c3c
+            )
+            await inter.response.edit_message(embed=result_embed, view=None)
+        
+        btn.callback = callback
+        view.add_item(btn)
+        
+        await interaction.edit_original_response(embed=embed, view=view)
+    
+    @app_commands.command(name="life", description="🧠 Get life advice")
+    async def life(self, interaction: discord.Interaction):
+        """Random life advice"""
+        advice = [
+            "Don't lick frozen poles in winter.",
+            "If you stare at the sun, you won't have to worry about eye strain anymore.",
+            "The early bird gets the worm, but the second mouse gets the cheese.",
+            "Always check if the toilet seat is down... the hard way.",
+            "Never trust a fart after taco night.",
+            "If at first you don't succeed, skydiving is not for you.",
+            "Life is like a box of chocolates. It doesn't last long if you're fat.",
+            "Drink water so you can be hydrated for your inevitable doom."
+        ]
+        
+        embed = discord.Embed(
+            title="🧠 Life Advice",
+            description=random.choice(advice),
+            color=0x3498db
+        )
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="who", description="🕵️ Pick a random server member")
+    async def who(self, interaction: discord.Interaction):
+        """Pick random user"""
+        members = [m for m in interaction.guild.members if not m.bot]
+        if not members:
+            await interaction.response.send_message("❌ No members found!", ephemeral=True)
+            return
+        
+        chosen = random.choice(members)
+        
+        embed = discord.Embed(
+            title="🕵️ The Chosen One",
+            description=f"**{chosen.mention}** has been selected!",
+            color=chosen.color
+        )
+        if chosen.avatar:
+            embed.set_thumbnail(url=chosen.avatar.url)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="resume", description="🧾 Generate a fake resume")
+    @app_commands.describe(user="Whose resume to generate")
+    async def resume(self, interaction: discord.Interaction, user: discord.Member = None):
+        """Fake resume generator"""
+        target = user or interaction.user
+        
+        jobs = ["Professional Sleeper", "Chocolate Taster", "Chief Procrastination Officer", "Meme Curator", "Discord Mod (supreme)", "Gacha Addict"]
+        skills = ["Can sleep for 14 hours straight", "Speaks fluent emoji", "Survived 1000 FGO gacha rolls with no SSRs", "Can eat 20 tacos", "Typing speed: 3 WPM"]
+        education = ["School of Hard Knocks", "University of Life", "Hogwarts (dropout)", "YouTube Academy", "Twitch Chat University"]
+        
+        embed = discord.Embed(
+            title=f"🧾 Resume: {target.display_name}",
+            color=0x95a5a6
+        )
+        embed.add_field(name="Current Position", value=random.choice(jobs), inline=False)
+        embed.add_field(name="Skills", value="\n".join(f"• {s}" for s in random.sample(skills, 3)), inline=False)
+        embed.add_field(name="Education", value=random.choice(education), inline=False)
+        embed.add_field(name="Experience", value=f"{random.randint(0, 50)} years in {random.choice(['suffering', 'gaming', 'shitposting', 'gacha'])}", inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="future", description="🔮 See your future")
+    @app_commands.describe(user="Whose future to read")
+    async def future(self, interaction: discord.Interaction, user: discord.Member = None):
+        """Random future prediction"""
+        target = user or interaction.user
+        
+        futures = [
+            "will embarrass themselves tomorrow in front of everyone.",
+            "will find a penny on the ground but lose their wallet.",
+            "will get an SSR on their next single roll.",
+            "will trip over nothing in the next 24 hours.",
+            "will become a famous meme... for the wrong reasons.",
+            "will discover that their fridge is actually empty.",
+            "will accidentally like their crush's 3-year-old photo.",
+            "will step on a LEGO today. Fate is cruel."
+        ]
+        
+        embed = discord.Embed(
+            title="🔮 Future Prediction",
+            description=f"**{target.display_name}** {random.choice(futures)}",
+            color=0x9b59b6
+        )
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="probability", description="📊 Calculate probability of anything")
+    @app_commands.describe(event="What to calculate")
+    async def probability(self, interaction: discord.Interaction, event: str):
+        """Random probability"""
+        chance = random.randint(0, 100)
+        
+        embed = discord.Embed(
+            title="📊 Probability Calculator",
+            description=f"Chance of **{event}**:",
+            color=0x3498db
+        )
+        
+        bar = "█" * (chance // 10) + "░" * (10 - (chance // 10))
+        embed.add_field(name=f"{bar} {chance}%", value="Probably accurate!", inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="trivia", description="❓ Answer a trivia question")
+    async def trivia(self, interaction: discord.Interaction):
+        """Trivia game"""
+        questions = [
+            {"q": "What does FGO stand for?", "a": ["fate grand order", "fate/grand order"], "hint": "Fate ___ ____"},
+            {"q": "Who is the Saber Class iconic servant?", "a": ["artoria", "saber", "arthuria"], "hint": "King of Knights"},
+            {"q": "What is the currency used in FGO gacha?", "a": ["saint quartz", "sq", "quartz"], "hint": "Saint _____"},
+            {"q": "What year was FGO released in Japan?", "a": ["2015"], "hint": "201X"},
+            {"q": "Who is Mash Kyrielight's voice actor?", "a": ["rie takahashi", "takahashi rie"], "hint": "Rie ________"}
+        ]
+        
+        q = random.choice(questions)
+        
+        embed = discord.Embed(
+            title="❓ FGO Trivia",
+            description=q['q'],
+            color=0xe74c3c
+        )
+        embed.set_footer(text="Type your answer in chat!")
+        
+        await interaction.response.send_message(embed=embed)
+        
+        def check(m):
+            return m.author.id == interaction.user.id and m.channel.id == interaction.channel_id
+        
+        try:
+            msg = await self.bot.wait_for('message', timeout=30.0, check=check)
+            if any(ans in msg.content.lower() for ans in q['a']):
+                await msg.reply("🎉 Correct!")
+            else:
+                await msg.reply(f"❌ Wrong! Answer: {q['a'][0]}")
+        except asyncio.TimeoutError:
+            await interaction.followup.send(f"⏰ Time's up! Answer: {q['a'][0]}")
 
 async def setup(bot):
     await bot.add_cog(FunCog(bot))
