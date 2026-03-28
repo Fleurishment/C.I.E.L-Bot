@@ -585,22 +585,7 @@ class FunCog(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
     
-    @app_commands.command(name="remind", description="🔔 Set a reminder")
-    @app_commands.describe(minutes="Minutes from now", reminder="What to remind you about")
-    async def remind(self, interaction: discord.Interaction, minutes: int, reminder: str):
-        """Set a reminder"""
-        if minutes < 1 or minutes > 1440:
-            await interaction.response.send_message("❌ Please set a time between 1 minute and 24 hours!", ephemeral=True)
-            return
-        
-        await interaction.response.send_message(f"🔔 Reminder set for **{minutes}** minute(s): \"{reminder}\"")
-        
-        await asyncio.sleep(minutes * 60)
-        
-        try:
-            await interaction.user.send(f"🔔 Reminder: **{reminder}**")
-        except:
-            await interaction.channel.send(f"🔔 {interaction.user.mention} Reminder: **{reminder}**")
+    # REMOVED: @app_commands.command(name="remind") - Moved to utility.py
     
     @app_commands.command(name="ascii", description="📝 ASCII art text")
     @app_commands.describe(text="Text to convert (max 10 chars)")
