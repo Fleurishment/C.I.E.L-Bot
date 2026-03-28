@@ -4,7 +4,7 @@ from discord.ext import commands
 import aiohttp
 import random
 import datetime
-import textwrap
+import asyncio
 
 class FunCog(commands.Cog):
     def __init__(self, bot):
@@ -16,7 +16,6 @@ class FunCog(commands.Cog):
         await interaction.response.defer()
         
         try:
-            # Official Joke API
             async with aiohttp.ClientSession() as session:
                 async with session.get("https://official-joke-api.appspot.com/random_joke") as resp:
                     if resp.status == 200:
@@ -28,21 +27,20 @@ class FunCog(commands.Cog):
                         )
                         await interaction.followup.send(embed=embed)
                     else:
-                        # Fallback jokes if API fails
-                        fallback_jokes = [
-                            ("Why don't scientists trust atoms?", "Because they make up everything!"),
-                            ("What do you call a fake noodle?", "An impasta!"),
-                            ("Why did the scarecrow win an award?", "He was outstanding in his field!")
-                        ]
-                        setup, punchline = random.choice(fallback_jokes)
-                        embed = discord.Embed(
-                            title="😂 Joke (Offline Mode)",
-                            description=f"**{setup}**\n\n||{punchline}||",
-                            color=0xffd700
-                        )
-                        await interaction.followup.send(embed=embed)
-        except Exception as e:
-            await interaction.followup.send("❌ Couldn't fetch a joke right now!")
+                        raise Exception("API failed")
+        except:
+            fallback_jokes = [
+                ("Why don't scientists trust atoms?", "Because they make up everything!"),
+                ("What do you call a fake noodle?", "An impasta!"),
+                ("Why did the scarecrow win an award?", "He was outstanding in his field!")
+            ]
+            setup, punchline = random.choice(fallback_jokes)
+            embed = discord.Embed(
+                title="😂 Joke (Offline Mode)",
+                description=f"**{setup}**\n\n||{punchline}||",
+                color=0xffd700
+            )
+            await interaction.followup.send(embed=embed)
     
     @app_commands.command(name="coinflip", description="🪙 Flip a coin")
     @app_commands.describe(bet="Heads or Tails?")
@@ -55,19 +53,21 @@ class FunCog(commands.Cog):
         result = random.choice(["Heads", "Tails"])
         bet_value = bet.value if isinstance(bet, app_commands.Choice) else None
         
-        embed = discord.Embed(
-            title="🪙 Coin Flip",
-            description=f"**{result}**",
-            color=0xc0c0c0 if result == "Heads" else 0xffd700
-        )
+        emojis = {"Heads": "🪙", "Tails": "🪙"}
         
         if bet_value:
             won = bet_value.lower() == result.lower()
-            embed.add_field(
-                name="Your Bet",
-                value=f"{'✅ You won!' if won else '❌ You lost!'}",
-                inline=False
-            )
+            color = 0x2ecc71 if won else 0xe74c3c
+            result_text = f"{'✅ You won!' if won else '❌ You lost!'}"
+        else:
+            color = 0xffd700
+            result_text = "🎲 Flip again?"
+        
+        embed = discord.Embed(
+            title=f"{emojis[result]} Coin Flip: {result}",
+            description=result_text,
+            color=color
+        )
         
         await interaction.response.send_message(embed=embed)
     
@@ -99,7 +99,6 @@ class FunCog(commands.Cog):
                 color=0xe74c3c
             )
             
-            # Check for crits (max rolls)
             crits = results.count(sides)
             if crits > 0:
                 embed.add_field(name="🔥 Critical!", value=f"Rolled max value {crits} time(s)!", inline=False)
@@ -169,7 +168,6 @@ class FunCog(commands.Cog):
                     else:
                         raise Exception("API failed")
         except:
-            # Fallback facts
             facts = [
                 "Octopuses have three hearts.",
                 "Bananas are berries, but strawberries aren't.",
@@ -193,7 +191,6 @@ class FunCog(commands.Cog):
             await interaction.response.send_message("❌ Intensity must be 1-3!", ephemeral=True)
             return
         
-        # Transformations
         result = text
         
         if intensity >= 1:
@@ -269,7 +266,6 @@ class FunCog(commands.Cog):
             color=0x2ecc71
         )
         
-        # Add other major cities
         other_times = []
         for tz, off in [("JST", 9), ("UTC", 0), ("EST", -5)]:
             if tz != timezone.upper():
@@ -277,6 +273,298 @@ class FunCog(commands.Cog):
                 other_times.append(f"{tz}: {t.strftime('%H:%M')}")
         
         embed.add_field(name="Other Zones", value=" | ".join(other_times), inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="rps", description="✊ Rock Paper Scissors")
+    @app_commands.describe(choice="Your choice")
+    @app_commands.choices(choice=[
+        app_commands.Choice(name="Rock ✊", value="rock"),
+        app_commands.Choice(name="Paper ✋", value="paper"),
+        app_commands.Choice(name="Scissors ✌️", value="scissors")
+    ])
+    async def rps(self, interaction: discord.Interaction, choice: app_commands.Choice[str]):
+        """Play Rock Paper Scissors"""
+        user_choice = choice.value
+        bot_choice = random.choice(["rock", "paper", "scissors"])
+        
+        emojis = {"rock": "✊", "paper": "✋", "scissors": "✌️"}
+        
+        if user_choice == bot_choice:
+            result = "It's a tie!"
+            color = 0x95a5a6
+        elif (user_choice == "rock" and bot_choice == "scissors") or \
+             (user_choice == "paper" and bot_choice == "rock") or \
+             (user_choice == "scissors" and bot_choice == "paper"):
+            result = "You win! 🎉"
+            color = 0x2ecc71
+        else:
+            result = "You lose! 😢"
+            color = 0xe74c3c
+        
+        embed = discord.Embed(
+            title="✊ Rock Paper Scissors",
+            color=color
+        )
+        embed.add_field(name="You", value=f"{emojis[user_choice]} {user_choice.title()}", inline=True)
+        embed.add_field(name="Bot", value=f"{emojis[bot_choice]} {bot_choice.title()}", inline=True)
+        embed.add_field(name="Result", value=result, inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="rate", description="📊 Rate something 1-10")
+    @app_commands.describe(thing="What to rate")
+    async def rate(self, interaction: discord.Interaction, thing: str):
+        """Rate anything"""
+        rating = random.randint(1, 10)
+        
+        comments = {
+            10: "Perfect! Absolutely flawless! ⭐",
+            9: "Excellent! Nearly perfect! ✨",
+            8: "Great! Very impressive! 👍",
+            7: "Good! Above average! 😊",
+            6: "Decent. Not bad, not great. 🤔",
+            5: "Average. Right in the middle. 😐",
+            4: "Below average. Could be better. 😕",
+            3: "Poor. Needs improvement. 😬",
+            2: "Bad. Very disappointing. 😞",
+            1: "Terrible. Absolutely awful. 💀"
+        }
+        
+        embed = discord.Embed(
+            title="📊 Rating",
+            description=f"I rate **{thing}** a **{rating}/10**",
+            color=0x3498db
+        )
+        embed.add_field(name="Verdict", value=comments[rating], inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="ship", description="💕 Ship two users")
+    @app_commands.describe(user1="First user", user2="Second user")
+    async def ship(self, interaction: discord.Interaction, user1: discord.Member, user2: discord.Member = None):
+        """Calculate compatibility"""
+        if user2 is None:
+            user2 = interaction.user
+        
+        combined = str(user1.id) + str(user2.id)
+        random.seed(combined)
+        percentage = random.randint(0, 100)
+        random.seed()
+        
+        name1 = user1.display_name[:len(user1.display_name)//2]
+        name2 = user2.display_name[len(user2.display_name)//2:]
+        ship_name = name1 + name2
+        
+        if percentage >= 90:
+            comment = "💕 Soulmates! A match made in heaven!"
+            color = 0xff69b4
+        elif percentage >= 70:
+            comment = "❤️ Great match! Very compatible!"
+            color = 0xe74c3c
+        elif percentage >= 50:
+            comment = "💛 Decent match. Worth a shot!"
+            color = 0xf1c40f
+        elif percentage >= 30:
+            comment = "💙 Could work... with effort."
+            color = 0x3498db
+        else:
+            comment = "💔 Not meant to be... sorry."
+            color = 0x95a5a6
+        
+        embed = discord.Embed(
+            title="💕 Compatibility Check",
+            description=f"**{user1.display_name}** 💞 **{user2.display_name}**",
+            color=color
+        )
+        embed.add_field(name="Compatibility", value=f"**{percentage}%**", inline=True)
+        embed.add_field(name="Ship Name", value=f"*{ship_name}*", inline=True)
+        embed.add_field(name="Verdict", value=comment, inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="quote", description="💬 Save a memorable quote")
+    @app_commands.describe(quote="The quote to save", author="Who said it")
+    async def save_quote(self, interaction: discord.Interaction, quote: str, author: str = None):
+        """Save a quote"""
+        if not hasattr(self.bot, 'quotes'):
+            self.bot.quotes = []
+        
+        self.bot.quotes.append({
+            'quote': quote,
+            'author': author or "Unknown",
+            'saved_by': interaction.user.display_name,
+            'time': datetime.datetime.now().strftime("%Y-%m-%d")
+        })
+        
+        embed = discord.Embed(
+            title="💬 Quote Saved",
+            description=f"\"*{quote}*\"",
+            color=0x9b59b6
+        )
+        if author:
+            embed.add_field(name="Author", value=f"- {author}", inline=False)
+        embed.set_footer(text=f"Saved by {interaction.user.display_name}")
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="quotes", description="📜 View saved quotes")
+    async def view_quotes(self, interaction: discord.Interaction):
+        """View all saved quotes"""
+        if not hasattr(self.bot, 'quotes') or len(self.bot.quotes) == 0:
+            await interaction.response.send_message("📭 No quotes saved yet! Use `/quote` to add one.", ephemeral=True)
+            return
+        
+        embed = discord.Embed(
+            title="📜 Saved Quotes",
+            color=0x9b59b6
+        )
+        
+        for i, q in enumerate(self.bot.quotes[-5:], 1):
+            text = f"\"{q['quote'][:100]}...\"\n— {q['author']} | Saved by {q['saved_by']}"
+            embed.add_field(name=f"Quote #{i}", value=text, inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="countdown", description="⏰ Set a countdown")
+    @app_commands.describe(seconds="Seconds to count down", message="What to countdown to")
+    async def countdown(self, interaction: discord.Interaction, seconds: int, message: str = "Time's up!"):
+        """Simple countdown timer"""
+        if seconds < 1 or seconds > 300:
+            await interaction.response.send_message("❌ Please choose between 1-300 seconds (5 minutes max)!", ephemeral=True)
+            return
+        
+        await interaction.response.send_message(f"⏰ Countdown started: **{seconds}** seconds until \"{message}\"")
+        
+        await asyncio.sleep(seconds)
+        
+        try:
+            await interaction.followup.send(f"⏰ **{message}**")
+        except:
+            await interaction.channel.send(f"⏰ **{message}**")
+    
+    @app_commands.command(name="meme", description="😂 Get a random meme")
+    async def meme(self, interaction: discord.Interaction):
+        """Fetch a random meme from Reddit"""
+        await interaction.response.defer()
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://meme-api.com/gimme") as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        
+                        embed = discord.Embed(
+                            title=data['title'],
+                            url=data['postLink'],
+                            color=0xffd700
+                        )
+                        embed.set_image(url=data['url'])
+                        embed.set_footer(text=f"👍 {data['ups']} | 💬 {data['commentCount']} | r/{data['subreddit']}")
+                        
+                        await interaction.followup.send(embed=embed)
+                    else:
+                        raise Exception("API failed")
+        except:
+            await interaction.followup.send("❌ Couldn't fetch a meme right now!")
+    
+    @app_commands.command(name="weather", description="🌤️ Check the weather (fake)")
+    @app_commands.describe(city="City name")
+    async def weather(self, interaction: discord.Interaction, city: str):
+        """Fake weather report"""
+        conditions = ["Sunny ☀️", "Cloudy ☁️", "Rainy 🌧️", "Stormy ⛈️", "Snowy ❄️", "Windy 💨", "Foggy 🌫️"]
+        temp = random.randint(-10, 40)
+        condition = random.choice(conditions)
+        
+        embed = discord.Embed(
+            title=f"🌤️ Weather in {city.title()}",
+            description=f"**{temp}°C** | {condition}",
+            color=0x3498db
+        )
+        
+        if temp > 30:
+            embed.add_field(name="Advice", value="🔥 It's hot! Stay hydrated!", inline=False)
+        elif temp < 0:
+            embed.add_field(name="Advice", value="❄️ Freezing! Wear a jacket!", inline=False)
+        elif "Rain" in condition:
+            embed.add_field(name="Advice", value="☂️ Don't forget your umbrella!", inline=False)
+        
+        embed.set_footer(text="Disclaimer: This is randomly generated for fun!")
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="remind", description="🔔 Set a reminder")
+    @app_commands.describe(minutes="Minutes from now", reminder="What to remind you about")
+    async def remind(self, interaction: discord.Interaction, minutes: int, reminder: str):
+        """Set a reminder"""
+        if minutes < 1 or minutes > 1440:
+            await interaction.response.send_message("❌ Please set a time between 1 minute and 24 hours!", ephemeral=True)
+            return
+        
+        await interaction.response.send_message(f"🔔 Reminder set for **{minutes}** minute(s): \"{reminder}\"")
+        
+        await asyncio.sleep(minutes * 60)
+        
+        try:
+            await interaction.user.send(f"🔔 Reminder: **{reminder}**")
+        except:
+            await interaction.channel.send(f"🔔 {interaction.user.mention} Reminder: **{reminder}**")
+    
+    @app_commands.command(name="ascii", description="📝 ASCII art text")
+    @app_commands.describe(text="Text to convert (max 10 chars)")
+    async def ascii_art(self, interaction: discord.Interaction, text: str):
+        """Simple block letter ASCII art"""
+        if len(text) > 10:
+            await interaction.response.send_message("❌ Max 10 characters!", ephemeral=True)
+            return
+        
+        letters = {
+            'A': [" ██  ", "████ ", "██ ██", "████ ", "██ ██"],
+            'B': ["████ ", "██ ██", "████ ", "██ ██", "████ "],
+            'C': [" ████", "██   ", "██   ", "██   ", " ████"],
+            'D': ["████ ", "██ ██", "██ ██", "██ ██", "████ "],
+            'E': ["█████", "██   ", "████ ", "██   ", "█████"],
+            'F': ["█████", "██   ", "████ ", "██   ", "██   "],
+            'G': [" ████", "██   ", "██ ██", "██ ██", " ████"],
+            'H': ["██ ██", "██ ██", "█████", "██ ██", "██ ██"],
+            'I': ["█████", "  ██  ", "  ██  ", "  ██  ", "█████"],
+            'J': ["█████", "   ██ ", "   ██ ", "██ ██ ", " ███  "],
+            'K': ["██ ██", "███  ", "████ ", "███  ", "██ ██"],
+            'L': ["██   ", "██   ", "██   ", "██   ", "█████"],
+            'M': ["██   ██", "███ ███", "███████", "██ █ ██", "██   ██"],
+            'N': ["██  ██", "███ ██", "██████", "██ ███", "██  ██"],
+            'O': [" ████ ", "██  ██", "██  ██", "██  ██", " ████ "],
+            'P': ["████ ", "██ ██", "████ ", "██   ", "██   "],
+            'Q': [" ████ ", "██  ██", "██  ██", "██ ███", " █████"],
+            'R': ["████ ", "██ ██", "████ ", "██ ██", "██ ██"],
+            'S': [" █████", "██    ", " ████ ", "    ██", "█████ "],
+            'T': ["█████", "  ██  ", "  ██  ", "  ██  ", "  ██  "],
+            'U': ["██ ██", "██ ██", "██ ██", "██ ██", " ███ "],
+            'V': ["██ ██", "██ ██", "██ ██", " ███ ", "  █  "],
+            'W': ["██   ██", "██   ██", "██ █ ██", "███████", "██   ██"],
+            'X': ["██ ██", " ███ ", "  █  ", " ███ ", "██ ██"],
+            'Y': ["██ ██", "██ ██", " ███ ", "  ██  ", "  ██  "],
+            'Z': ["█████", "   ██ ", "  ██  ", " ██   ", "█████"],
+            ' ': ["     ", "     ", "     ", "     ", "     "],
+            '!': ["  █  ", "  █  ", "  █  ", "     ", "  █  "],
+            '?': [" ███ ", "█   █", "   ██", "  █  ", "     "]
+        }
+        
+        text = text.upper()
+        lines = ["", "", "", "", ""]
+        
+        for char in text:
+            letter = letters.get(char, letters['?'])
+            for i in range(5):
+                lines[i] += letter[i] + "  "
+        
+        result = "```\n" + "\n".join(lines) + "\n```"
+        
+        embed = discord.Embed(
+            title="📝 ASCII Art",
+            description=result,
+            color=0x95a5a6
+        )
         
         await interaction.response.send_message(embed=embed)
 
