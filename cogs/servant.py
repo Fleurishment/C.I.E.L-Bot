@@ -6,6 +6,7 @@ import aiohttp
 import re
 import random
 import datetime
+from utils.atlas_api import AtlasAPI
 
 class ServantView(View):
     def __init__(self, servant_data, assets, region):
@@ -188,7 +189,6 @@ class ServantCog(commands.Cog):
         self.api = None
     
     async def cog_load(self):
-        from utils.atlas_api import AtlasAPI
         self.api = AtlasAPI(self.bot.session)
     
     @app_commands.command(name="servant", description="Search for FGO servant information")
@@ -387,6 +387,95 @@ class ServantCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error fetching artwork: {str(e)}")
     
+    @app_commands.command(name="randomart", description="🎲 Get a random servant artwork")
+    @app_commands.describe(region="Game region")
+    @app_commands.choices(region=[
+        app_commands.Choice(name="North America", value="NA"),
+        app_commands.Choice(name="Japan", value="JP")
+    ])
+    async def random_artwork(self, interaction: discord.Interaction, region: app_commands.Choice[str] = "NA"):
+        """Get random servant artwork from ascension 1-4 or costumes"""
+        await interaction.response.defer()
+        
+        region_code = region.value if isinstance(region, app_commands.Choice) else region
+        
+        try:
+            # Get random servant
+            # Use a list of popular servant IDs for better randomization
+            popular_ids = list(range(1, 350))  # Most servants are in this range
+            random.shuffle(popular_ids)
+            
+            # Try up to 10 random servants to find one with artwork
+            for servant_id in popular_ids[:10]:
+                try:
+                    servant_data = await self.api.get_servant_details(servant_id, region_code)
+                    if not servant_data:
+                        continue
+                    
+                    assets = await self.api.get_servant_assets(servant_id, region_code)
+                    chara_graph = assets.get('charaGraph', {})
+                    
+                    if not chara_graph:
+                        continue
+                    
+                    # Collect all available artwork
+                    all_artwork = []
+                    
+                    # Add ascension artwork (1-4)
+                    asc_images = chara_graph.get('ascension', {})
+                    for key, url in asc_images.items():
+                        if url and isinstance(url, str) and url.startswith('http'):
+                            all_artwork.append({
+                                'url': url,
+                                'type': 'Ascension',
+                                'number': key
+                            })
+                    
+                    # Add costume artwork
+                    costume_images = chara_graph.get('costume', {})
+                    for key, url in costume_images.items():
+                        if url and isinstance(url, str) and url.startswith('http'):
+                            all_artwork.append({
+                                'url': url,
+                                'type': 'Costume',
+                                'number': key
+                            })
+                    
+                    if not all_artwork:
+                        continue
+                    
+                    # Pick random artwork from all available
+                    selected = random.choice(all_artwork)
+                    
+                    # Create embed
+                    embed = discord.Embed(
+                        title=f"🎲 Random Artwork",
+                        color=0xff69b4
+                    )
+                    embed.set_image(url=selected['url'])
+                    
+                    # Add info fields
+                    embed.add_field(name="Servant", value=servant_data['name'], inline=True)
+                    embed.add_field(name="Class", value=servant_data.get('className', 'Unknown'), inline=True)
+                    embed.add_field(name="Rarity", value="★" * servant_data.get('rarity', 0), inline=True)
+                    embed.add_field(name="Region", value=region_code, inline=True)
+                    embed.add_field(name="Art Type", value=f"{selected['type']} {selected['number']}", inline=True)
+                    embed.add_field(name="Servant ID", value=servant_data['id'], inline=True)
+                    
+                    embed.set_footer(text=f"Use /artwork {servant_data['name']} to see all artwork")
+                    
+                    await interaction.followup.send(embed=embed)
+                    return  # Success, exit loop
+                    
+                except Exception as e:
+                    continue  # Try next servant
+            
+            # If we get here, no artwork was found
+            await interaction.followup.send("❌ Couldn't find any artwork. Try again!")
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
+    
     @app_commands.command(name="search", description="Search servants by name (API only)")
     @app_commands.describe(name="Servant name")
     async def search(self, interaction: discord.Interaction, name: str):
@@ -412,7 +501,53 @@ class ServantCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {str(e)}")
     
-    # FUN FEATURES
+    @app_commands.command(name="ce", description="Search for Craft Essences")
+    @app_commands.describe(name="CE name to search for", region="Game region")
+    @app_commands.choices(region=[
+        app_commands.Choice(name="North America", value="NA"),
+        app_commands.Choice(name="Japan", value="JP")
+    ])
+    async def ce_search(self, interaction: discord.Interaction, name: str, region: app_commands.Choice[str] = "NA"):
+        """Search for Craft Essences"""
+        await interaction.response.defer()
+        
+        region_code = region.value if isinstance(region, app_commands.Choice) else region
+        url = f"https://api.atlasacademy.io/nice/{region_code}/equip/search?name={name}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("❌ No CEs found.")
+                        return
+                    ces = await resp.json()
+            
+            if not ces:
+                await interaction.followup.send(f"No CEs found matching '{name}'")
+                return
+            
+            embed = discord.Embed(title="Craft Essence Results", color=0xff69b4)
+            
+            for ce in ces[:5]:
+                stars = "★" * ce.get('rarity', 0)
+                hp = ce.get('hpGrowth', [0])[-1] if ce.get('hpGrowth') else 0
+                atk = ce.get('atkGrowth', [0])[-1] if ce.get('atkGrowth') else 0
+                
+                skills = ce.get('skills', [])
+                effect = "No effect"
+                if skills:
+                    effect = skills[0].get('detail', 'Unknown')
+                    effect = re.sub(r'\[.*?\]', '', effect)[:100] + "..."
+                
+                embed.add_field(
+                    name=f"{ce['name']} {stars}",
+                    value=f"ATK: {atk} | HP: {hp}\n{effect}",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {str(e)}")
     
     @app_commands.command(name="gacha", description="🎲 Roll the gacha!")
     @app_commands.describe(quartz="Amount of Saint Quartz to spend (3 per roll)", banner="Choose your banner type")
@@ -537,53 +672,108 @@ class ServantCog(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
     
-    @app_commands.command(name="ce", description="Search for Craft Essences")
-    @app_commands.describe(name="CE name to search for", region="Game region")
-    @app_commands.choices(region=[
-        app_commands.Choice(name="North America", value="NA"),
-        app_commands.Choice(name="Japan", value="JP")
+    @app_commands.command(name="weakness", description="⚔️ Show class advantages")
+    @app_commands.describe(class_name="Class to check")
+    @app_commands.choices(class_name=[
+        app_commands.Choice(name="Saber", value="Saber"),
+        app_commands.Choice(name="Archer", value="Archer"),
+        app_commands.Choice(name="Lancer", value="Lancer"),
+        app_commands.Choice(name="Rider", value="Rider"),
+        app_commands.Choice(name="Caster", value="Caster"),
+        app_commands.Choice(name="Assassin", value="Assassin"),
+        app_commands.Choice(name="Berserker", value="Berserker"),
+        app_commands.Choice(name="Ruler", value="Ruler"),
+        app_commands.Choice(name="Avenger", value="Avenger"),
+        app_commands.Choice(name="Alter Ego", value="AlterEgo"),
+        app_commands.Choice(name="Moon Cancer", value="MoonCancer"),
+        app_commands.Choice(name="Foreigner", value="Foreigner"),
+        app_commands.Choice(name="Pretender", value="Pretender")
     ])
-    async def ce_search(self, interaction: discord.Interaction, name: str, region: app_commands.Choice[str] = "NA"):
-        """Search for Craft Essences"""
-        await interaction.response.defer()
+    async def weakness(self, interaction: discord.Interaction, class_name: app_commands.Choice[str]):
+        """Class advantage chart"""
+        name = class_name.value
         
-        region_code = region.value if isinstance(region, app_commands.Choice) else region
-        url = f"https://api.atlasacademy.io/nice/{region_code}/equip/search?name={name}"
+        advantages = {
+            "Saber": {"strong": "Lancer", "weak": "Archer", "damage": "0.5x to Archer, 2x to Lancer"},
+            "Archer": {"strong": "Saber", "weak": "Lancer", "damage": "0.5x to Lancer, 2x to Saber"},
+            "Lancer": {"strong": "Archer", "weak": "Saber", "damage": "0.5x to Saber, 2x to Archer"},
+            "Rider": {"strong": "Caster", "weak": "Assassin", "damage": "0.5x to Assassin, 2x to Caster"},
+            "Caster": {"strong": "Assassin", "weak": "Rider", "damage": "0.5x to Rider, 2x to Assassin"},
+            "Assassin": {"strong": "Rider", "weak": "Caster", "damage": "0.5x to Caster, 2x to Rider"},
+            "Berserker": {"strong": "All (except Foreigner)", "weak": "All (2x damage taken)", "damage": "1.5x to all, takes 2x from all"},
+            "Ruler": {"strong": "Avenger, Moon Cancer, Berserker", "weak": "Avenger", "damage": "Takes half from most classes"},
+            "Avenger": {"strong": "Ruler, Berserker", "weak": "Ruler, Foreigner", "damage": "2x to Ruler"},
+            "AlterEgo": {"strong": "Cavalry classes", "weak": "Knight classes", "damage": "1.5x to Rider/Caster/Assassin"},
+            "MoonCancer": {"strong": "Avenger, Berserker", "weak": "Ruler, Foreigner", "damage": "2x to Avenger"},
+            "Foreigner": {"strong": "Berserker, Foreigner", "weak": "Alter Ego", "damage": "2x to Berserker"},
+            "Pretender": {"strong": "Assassin, Caster, Rider", "weak": "Berserker, Foreigner", "damage": "2x to Assassin/Caster/Rider"}
+        }
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        await interaction.followup.send("❌ No CEs found.")
-                        return
-                    ces = await resp.json()
-            
-            if not ces:
-                await interaction.followup.send(f"No CEs found matching '{name}'")
-                return
-            
-            embed = discord.Embed(title="Craft Essence Results", color=0xff69b4)
-            
-            for ce in ces[:5]:
-                stars = "★" * ce.get('rarity', 0)
-                hp = ce.get('hpGrowth', [0])[-1] if ce.get('hpGrowth') else 0
-                atk = ce.get('atkGrowth', [0])[-1] if ce.get('atkGrowth') else 0
-                
-                skills = ce.get('skills', [])
-                effect = "No effect"
-                if skills:
-                    effect = skills[0].get('detail', 'Unknown')
-                    effect = re.sub(r'\[.*?\]', '', effect)[:100] + "..."
-                
-                embed.add_field(
-                    name=f"{ce['name']} {stars}",
-                    value=f"ATK: {atk} | HP: {hp}\n{effect}",
-                    inline=False
-                )
-            
-            await interaction.followup.send(embed=embed)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {str(e)}")
+        data = advantages.get(name, {"strong": "Unknown", "weak": "Unknown", "damage": "No data"})
+        
+        embed = discord.Embed(
+            title=f"⚔️ {name} Class Advantage",
+            color=0xe74c3c
+        )
+        embed.add_field(name="Strong Against", value=data["strong"], inline=True)
+        embed.add_field(name="Weak Against", value=data["weak"], inline=True)
+        embed.add_field(name="Damage Modifiers", value=data["damage"], inline=False)
+        
+        if name in ["Saber", "Archer", "Lancer"]:
+            embed.add_field(name="Class Triangle", value="Saber > Lancer > Archer > Saber", inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="banner", description="🎰 Check current/upcoming banners")
+    async def banner(self, interaction: discord.Interaction):
+        """Show current and upcoming rate-up banners"""
+        banners = [
+            {"name": "New Year 2026", "servant": "Koyanskaya of Light", "class": "Assassin", "start": "Jan 1", "end": "Jan 15"},
+            {"name": "Valentine 2026", "servant": "Nero Claudius (Bride)", "class": "Saber", "start": "Feb 8", "end": "Feb 22"},
+            {"name": "White Day 2026", "servant": "Arthur Pendragon (Prototype)", "class": "Saber", "start": "Mar 8", "end": "Mar 22"}
+        ]
+        
+        embed = discord.Embed(
+            title="🎰 Upcoming Banners (NA)",
+            description="Rate-up banners for 2026",
+            color=0xff69b4
+        )
+        
+        for b in banners:
+            embed.add_field(
+                name=f"{b['name']}",
+                value=f"⭐⭐⭐⭐⭐ {b['servant']} ({b['class']})\n📅 {b['start']} - {b['end']}",
+                inline=False
+            )
+        
+        embed.set_footer(text="Dates are estimates based on JP schedule")
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="exp", description="📈 Calculate EXP cards needed")
+    @app_commands.describe(current_level="Current level", target_level="Target level", rarity="Servant rarity")
+    async def exp_calc(self, interaction: discord.Interaction, current_level: int, target_level: int, rarity: int = 5):
+        """Calculate EXP cards needed for leveling"""
+        if current_level >= target_level or target_level > 120:
+            await interaction.response.send_message("❌ Invalid levels! (Max 120)", ephemeral=True)
+            return
+        
+        exp_per_gold = 32400
+        levels_needed = target_level - current_level
+        avg_exp_per_level = 100000 if target_level <= 100 else 200000
+        total_exp = levels_needed * avg_exp_per_level
+        gold_cards = (total_exp // exp_per_gold) + 1
+        qp_cost = total_exp * 10
+        
+        embed = discord.Embed(
+            title="📈 EXP Calculator",
+            description=f"Level {current_level} → {target_level} ({rarity}★ servant)",
+            color=0x9b59b6
+        )
+        embed.add_field(name="4★ EXP Cards Needed", value=f"~**{gold_cards}** cards", inline=True)
+        embed.add_field(name="Approximate QP Cost", value=f"{qp_cost:,}", inline=True)
+        embed.add_field(name="Tips", value="Run Ember Gathering daily quests!\n40 AP quest drops ~5-7 gold cards.", inline=False)
+        
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(ServantCog(bot))
