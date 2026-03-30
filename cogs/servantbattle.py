@@ -129,7 +129,7 @@ class BattleView(View):
         field1 = f"{p1_bar}\n**{p1_hp}/{p1['max_hp']} HP**"
         field2 = f"{p2_bar}\n**{p2_hp}/{p2['max_hp']} HP**"
         
-        embed.add_field(name=f {self.player1.display_name}\n{p1_name}", value=field1, inline=True)
+        embed.add_field(name=f" {self.player1.display_name}\n{p1_name}", value=field1, inline=True)
         embed.add_field(name="VS", value="⚔️", inline=True)
         
         p2_display = self.player2.display_name if self.is_pvp else "C.I.E.L"
