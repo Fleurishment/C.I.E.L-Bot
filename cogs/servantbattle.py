@@ -129,11 +129,11 @@ class BattleView(View):
         field1 = f"{p1_bar}\n**{p1_hp}/{p1['max_hp']} HP**"
         field2 = f"{p2_bar}\n**{p2_hp}/{p2['max_hp']} HP**"
         
-        embed.add_field(name=f"🧑‍🎤 {self.player1.display_name}\n{p1_name}", value=field1, inline=True)
+        embed.add_field(name=f {self.player1.display_name}\n{p1_name}", value=field1, inline=True)
         embed.add_field(name="VS", value="⚔️", inline=True)
         
-        p2_display = self.player2.display_name if self.is_pvp else "🤖 Bot"
-        embed.add_field(name=f"🧑‍🎤 {p2_display}\n{p2_name}", value=field2, inline=True)
+        p2_display = self.player2.display_name if self.is_pvp else "C.I.E.L"
+        embed.add_field(name=f" {p2_display}\n{p2_name}", value=field2, inline=True)
         
         if self.battle.get('log'):
             recent_logs = self.battle['log'][-5:]
@@ -193,7 +193,7 @@ class BattleView(View):
             loser = p2 if winner == 2 else p1
             embed.add_field(
                 name="Result",
-                value=f"**{loser['servant']['name']}**: Ahh master it seems we lost this one...",
+                value=f"**{loser['servant']['name']}**: WE WON Master! I promise I will not let anymore danger come your way.",
                 inline=False
             )
         
@@ -232,7 +232,7 @@ class BattleView(View):
             self.battle['log'].append(f"🛡️ {attacker['servant']['name']} is defending!")
             
         elif action == "special":
-            if random.random() < 0.7:
+            if random.random() < 0.4:
                 damage = random.randint(30, 50)
                 if defender.get('defending'):
                     damage = damage // 2
