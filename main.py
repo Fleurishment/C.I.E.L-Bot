@@ -3,9 +3,27 @@ import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from threading import Thread
+from flask import Flask
 
 load_dotenv()
 
+# === WEB SERVER FOR RENDER ===
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "C.I.E.L Bot is online! ✅"
+
+@app.route('/health')
+def health():
+    return {"status": "alive"}, 200
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# === DISCORD BOT ===
 class FGOBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -19,18 +37,15 @@ class FGOBot(commands.Bot):
         self.session = None
     
     async def setup_hook(self):
-        # Create session for API calls
         import aiohttp
         self.session = aiohttp.ClientSession()
         
-        # Load ONLY these cogs (removed scraper)
         await self.load_extension('cogs.servant')
         await self.load_extension('cogs.utility')
         await self.load_extension('cogs.fun')
         await self.load_extension('cogs.rayshift')
         await self.load_extension('cogs.servantbattle')
         
-        # Sync slash commands
         try:
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} slash commands globally")
@@ -56,7 +71,6 @@ class FGOBot(commands.Bot):
             del utility_cog.afk_users[message.author.id]
             await message.reply("Welcome back! I removed your AFK status.", delete_after=5)
         
-        # Check if mentioning AFK user
         for mention in message.mentions:
             if utility_cog and mention.id in utility_cog.afk_users:
                 data = utility_cog.afk_users[mention.id]
@@ -70,6 +84,12 @@ class FGOBot(commands.Bot):
         await super().close()
 
 async def main():
+    # Start Flask web server in background thread
+    web_thread = Thread(target=run_web)
+    web_thread.daemon = True
+    web_thread.start()
+    print(f"Web server started on port {os.environ.get('PORT', 8080)}")
+    
     async with FGOBot() as bot:
         await bot.start(os.getenv('DISCORD_TOKEN'))
 
